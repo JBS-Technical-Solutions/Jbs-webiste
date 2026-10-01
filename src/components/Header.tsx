@@ -1,0 +1,161 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { AnimatePresence, motion, type Variants } from "motion/react";
+import { useLenis } from "lenis/react";
+import Logo from "./Logo";
+import { easeInOut, easeOut } from "./motion/easing";
+import { enquireHref, nav, phoneHref, site } from "@/lib/site";
+
+const menuItems = [{ href: "/", label: "Home" }, ...nav, { href: enquireHref, label: "Enquire" }];
+
+const list: Variants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.07, delayChildren: 0.35 } },
+};
+const item: Variants = {
+  hidden: { y: "110%" },
+  visible: { y: "0%", transition: { duration: 0.9, ease: easeOut } },
+};
+
+export default function Header() {
+  const pathname = usePathname();
+  const lenis = useLenis();
+  const [open, setOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 24);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    lenis?.stop();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      lenis?.start();
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open, lenis]);
+
+  return (
+    <>
+      <header
+        className={`fixed inset-x-0 top-0 z-50 border-b transition-colors duration-500 ${
+          scrolled && !open ? "border-line/70 bg-paper/75 backdrop-blur-md" : "border-transparent"
+        }`}
+      >
+        <div className="mx-auto grid h-20 max-w-7xl grid-cols-[1fr_auto_1fr] items-center px-6 lg:px-12">
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            aria-controls="site-menu"
+            aria-label={open ? "Close menu" : "Open menu"}
+            className="group flex items-center gap-3 justify-self-start py-2 text-xs font-semibold uppercase tracking-[0.25em]"
+          >
+            <span className="relative block h-3 w-7">
+              <span
+                className={`absolute left-0 top-0 h-px w-full bg-ink transition-transform duration-500 ${
+                  open ? "translate-y-[5px] rotate-45" : ""
+                }`}
+              />
+              <span
+                className={`absolute bottom-0 left-0 h-px bg-ink transition-all duration-500 ${
+                  open ? "w-full -translate-y-[6px] -rotate-45" : "w-full group-hover:w-2/3"
+                }`}
+              />
+            </span>
+            <span className="hidden sm:inline">{open ? "Close" : "Menu"}</span>
+          </button>
+
+          <Logo showName={false} />
+
+          <Link
+            href={enquireHref}
+            onClick={() => setOpen(false)}
+            className="justify-self-end rounded-full bg-accent px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white transition-colors hover:bg-accent-deep sm:px-5 sm:py-2.5 sm:text-xs"
+          >
+            Enquire
+          </Link>
+        </div>
+      </header>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            id="site-menu"
+            key="menu"
+            className="fixed inset-0 z-40 bg-paper"
+            initial={{ clipPath: "inset(0% 0% 100% 0%)" }}
+            animate={{ clipPath: "inset(0% 0% 0% 0%)" }}
+            exit={{ clipPath: "inset(0% 0% 100% 0%)" }}
+            transition={{ duration: 0.9, ease: easeInOut }}
+          >
+            <div className="mx-auto flex h-full max-w-7xl flex-col justify-between gap-12 px-6 pb-10 pt-28 lg:flex-row lg:items-end lg:px-12 lg:pb-16">
+              <motion.ul variants={list} initial="hidden" animate="visible">
+                {menuItems.map((link, i) => {
+                  const active = pathname === link.href;
+                  return (
+                    <li key={link.href} className="overflow-hidden">
+                      <motion.div variants={item}>
+                        <Link
+                          href={link.href}
+                          onClick={() => setOpen(false)}
+                          aria-current={active ? "page" : undefined}
+                          className="group flex items-baseline gap-4 py-1 sm:gap-6"
+                        >
+                          <span className="font-mono text-xs text-muted">0{i + 1}</span>
+                          <span
+                            className={`text-[clamp(2.5rem,7vw,5.5rem)] font-semibold uppercase leading-none tracking-[-0.03em] transition-all duration-500 group-hover:translate-x-3 group-hover:text-accent ${
+                              active ? "text-accent" : ""
+                            }`}
+                          >
+                            {link.label}
+                          </span>
+                        </Link>
+                      </motion.div>
+                    </li>
+                  );
+                })}
+              </motion.ul>
+
+              <motion.div
+                initial={{ opacity: 0, y: 24 }}
+                animate={{ opacity: 1, y: 0, transition: { delay: 0.65, duration: 0.8, ease: easeOut } }}
+                exit={{ opacity: 0, transition: { duration: 0.2 } }}
+                className="space-y-6 text-sm lg:text-right"
+              >
+                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-accent-deep">{site.tagline}</p>
+                <div className="space-y-1.5 text-muted">
+                  <a href={`mailto:${site.email}`} className="block hover:text-ink">
+                    {site.email}
+                  </a>
+                  <a href={phoneHref} className="block hover:text-ink">
+                    {site.phone}
+                  </a>
+                  <p>{site.address}</p>
+                </div>
+                <a
+                  href={site.linkedin}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block text-xs font-semibold uppercase tracking-[0.25em] hover:text-accent-deep"
+                >
+                  LinkedIn ↗
+                </a>
+              </motion.div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}

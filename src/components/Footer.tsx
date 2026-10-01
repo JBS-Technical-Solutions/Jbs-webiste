@@ -1,0 +1,73 @@
+import Link from "next/link";
+import Logo from "./Logo";
+import Reveal from "./motion/Reveal";
+import { enquireHref, nav, phoneHref, site } from "@/lib/site";
+
+export default function Footer() {
+  return (
+    <footer className="border-t border-line bg-soft/60">
+      <div className="mx-auto grid max-w-7xl gap-12 px-6 py-16 md:grid-cols-[1.6fr_1fr_1.2fr] lg:px-12">
+        <Reveal>
+          <Logo />
+          <p className="mt-6 text-2xl font-semibold uppercase leading-tight tracking-tight text-accent-deep">
+            {site.tagline}
+          </p>
+          <p className="mt-3 max-w-xs text-sm leading-relaxed text-muted">
+            Data science, digital twins and process engineering for the energy and chemical industries.
+          </p>
+        </Reveal>
+
+        <Reveal delay={0.1}>
+          <h2 className="text-xs font-semibold uppercase tracking-[0.25em] text-muted">Company</h2>
+          <ul className="mt-5 space-y-2.5 text-[15px]">
+            {nav.map((item) => (
+              <li key={item.href}>
+                <Link href={item.href} className="transition-colors hover:text-accent-deep">
+                  {item.label}
+                </Link>
+              </li>
+            ))}
+            <li>
+              <Link href={enquireHref} className="transition-colors hover:text-accent-deep">
+                Enquire
+              </Link>
+            </li>
+          </ul>
+        </Reveal>
+
+        <Reveal delay={0.2}>
+          <h2 className="text-xs font-semibold uppercase tracking-[0.25em] text-muted">Contact</h2>
+          <ul className="mt-5 space-y-2.5 text-[15px]">
+            <li>
+              <a href={`mailto:${site.email}`} className="transition-colors hover:text-accent-deep">
+                {site.email}
+              </a>
+            </li>
+            <li>
+              <a href={phoneHref} className="transition-colors hover:text-accent-deep">
+                {site.phone}
+              </a>
+            </li>
+            <li className="text-muted">{site.address}</li>
+            <li>
+              <a
+                href={site.linkedin}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="transition-colors hover:text-accent-deep"
+              >
+                LinkedIn ↗
+              </a>
+            </li>
+          </ul>
+        </Reveal>
+      </div>
+
+      <div className="border-t border-line">
+        <div className="mx-auto max-w-7xl px-6 py-5 text-xs uppercase tracking-[0.15em] text-muted lg:px-12">
+          © {new Date().getFullYear()} {site.name}. All rights reserved.
+        </div>
+      </div>
+    </footer>
+  );
+}
