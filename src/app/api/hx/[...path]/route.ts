@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 
 const BACKEND_URL = (process.env.HX_API_URL || "http://localhost:8000").replace(/\/$/, "");
+const BACKEND_KEY = process.env.HX_API_KEY;
 const ALLOWED = new Set(["health", "info", "predict", "compare"]);
 
 async function proxy(req: NextRequest, { params }: RouteContext<"/api/hx/[...path]">) {
@@ -11,7 +12,7 @@ async function proxy(req: NextRequest, { params }: RouteContext<"/api/hx/[...pat
   try {
     const res = await fetch(`${BACKEND_URL}/${endpoint}`, {
       method: req.method,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(BACKEND_KEY && { "X-API-Key": BACKEND_KEY }) },
       body: req.method === "POST" ? await req.text() : undefined,
       cache: "no-store",
     });
