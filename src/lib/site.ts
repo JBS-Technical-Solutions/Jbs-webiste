@@ -16,8 +16,6 @@ export const nav = [
 
 export const enquireHref = "/enquire";
 
-export const simulationUrl = process.env.NEXT_PUBLIC_SIMULATION_URL || "http://localhost:3001";
-
 export const phoneHref = `tel:+${site.phone.replace(/\D/g, "")}`;
 
 export const stats = [

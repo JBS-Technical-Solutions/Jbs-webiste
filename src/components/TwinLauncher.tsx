@@ -1,13 +1,24 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useLenis } from "lenis/react";
 import EquipmentDiagram from "./EquipmentDiagram";
 import { easeInOut, easeOut } from "./motion/easing";
-import { enquireHref, simulationUrl } from "@/lib/site";
+import { enquireHref } from "@/lib/site";
 import { models, type EquipmentModel } from "@/lib/models";
+
+const HeatExchangerTwin = dynamic(() => import("./hx/HeatExchangerTwin"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full flex-col items-center justify-center gap-4 text-paper/70">
+      <span className="h-10 w-10 animate-spin rounded-full border-2 border-white/15 border-t-accent" />
+      <p className="text-xs font-semibold uppercase tracking-[0.25em]">Loading simulation</p>
+    </div>
+  ),
+});
 
 const order: EquipmentModel["slug"][] = ["heat-exchanger", "pump", "methanol-reactor"];
 const launchModels = order.map((slug) => models.find((m) => m.slug === slug)!);
@@ -106,10 +117,9 @@ function useDialog(open: boolean, onClose: () => void) {
 
 function SimulationModal({ model, onClose }: { model: EquipmentModel | null; onClose: () => void }) {
   const closeRef = useDialog(!!model, onClose);
-  const [loaded, setLoaded] = useState(false);
 
   return (
-    <AnimatePresence onExitComplete={() => setLoaded(false)}>
+    <AnimatePresence>
       {model && (
         <motion.div
           key="simulation-modal"
@@ -145,19 +155,8 @@ function SimulationModal({ model, onClose }: { model: EquipmentModel | null; onC
             </button>
           </div>
 
-          <div className="relative flex-1">
-            {!loaded && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-paper/70">
-                <span className="h-10 w-10 animate-spin rounded-full border-2 border-white/15 border-t-accent" />
-                <p className="text-xs font-semibold uppercase tracking-[0.25em]">Loading simulation</p>
-              </div>
-            )}
-            <iframe
-              src={simulationUrl}
-              title="Heat exchanger digital twin simulation"
-              onLoad={() => setLoaded(true)}
-              className={`absolute inset-0 h-full w-full border-0 transition-opacity duration-500 ${loaded ? "opacity-100" : "opacity-0"}`}
-            />
+          <div data-lenis-prevent className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <HeatExchangerTwin className="min-h-full" />
           </div>
         </motion.div>
       )}
