@@ -7,4 +7,4 @@ simulators
 Dockerfile
 .dockerignore
 docker-compose.yml
-Caddyfile
+caddy

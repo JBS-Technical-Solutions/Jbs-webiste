@@ -31,7 +31,7 @@ services:
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy:/etc/caddy:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
