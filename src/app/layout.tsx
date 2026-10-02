@@ -42,6 +42,26 @@ export const metadata: Metadata = {
     url: "/",
     images: [{ url: "/videos/hero-poster.jpg", width: 1600, height: 900, alt: "Process plant" }],
   },
+  twitter: { card: "summary_large_image" },
+};
+
+const organization = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  name: site.name,
+  slogan: site.tagline,
+  description,
+  url: site.url,
+  logo: `${site.url}/logo.png`,
+  email: site.email,
+  telephone: site.phone,
+  address: {
+    "@type": "PostalAddress",
+    addressRegion: "TX",
+    addressLocality: "Houston",
+    addressCountry: "US",
+  },
+  sameAs: [site.linkedin],
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -51,6 +71,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} ${instrumentSerif.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(organization).replace(/</g, "\\u003c") }}
+        />
         <Providers>
           <Header />
           <main className="flex flex-1 flex-col">{children}</main>
