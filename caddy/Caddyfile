@@ -1,6 +1,15 @@
 {$SITE_ADDRESS} {
 	encode zstd gzip
 
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
 	@www expression {host}.startsWith("www.")
 	redir @www https://{labels.1}.{labels.0}{uri} permanent
 
