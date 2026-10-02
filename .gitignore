@@ -37,6 +37,11 @@ yarn-error.log*
 # vercel
 .vercel
 
+# python simulators: virtualenvs + trained models (regenerate with train.py)
+.venv/
+__pycache__/
+/simulators/*/backend/artifacts/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

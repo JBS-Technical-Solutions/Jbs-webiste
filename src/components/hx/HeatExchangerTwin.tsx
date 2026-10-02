@@ -143,9 +143,7 @@ export default function HeatExchangerTwin({ className = "" }: { className?: stri
         {status === "offline" && (
           <div className="banner error" role="alert">
             <strong>The simulation models are offline.</strong>
-            <span>
-              Start the Python backend from <code>HE_website\backend</code> on port <code>8000</code>, then retry.
-            </span>
+            <span>They may still be starting up. Please retry in a moment.</span>
             <button type="button" className="preset" onClick={connect}>
               Retry connection
             </button>

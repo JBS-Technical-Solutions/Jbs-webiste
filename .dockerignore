@@ -1,0 +1,10 @@
+.git
+.next
+node_modules
+simulators
+.env*
+!.env.example
+Dockerfile
+.dockerignore
+docker-compose.yml
+Caddyfile
