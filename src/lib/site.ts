@@ -1,7 +1,7 @@
 export const site = {
   name: "JBS Technical Solutions",
   tagline: "Intelligence behind the process",
-  url: "https://jbstechsolutions.com",
+  url: "https://jbstechservices.com",
   email: "rajeshdgupta2001@gmail.com",
   phone: "+1 (832) 726-6572",
   address: "Greater Houston, Texas",
