@@ -7,9 +7,9 @@ import { AnimatePresence, motion, type Variants } from "motion/react";
 import { useLenis } from "lenis/react";
 import Logo from "./Logo";
 import { easeInOut, easeOut } from "./motion/easing";
-import { enquireHref, nav, phoneHref, site } from "@/lib/site";
+import { contactHref, contactLabel, nav, site } from "@/lib/site";
 
-const menuItems = [{ href: "/", label: "Home" }, ...nav, { href: enquireHref, label: "Enquire" }];
+const menuItems = [{ href: "/", label: "Home" }, ...nav, { href: contactHref, label: contactLabel }];
 
 const list: Variants = {
   hidden: {},
@@ -76,14 +76,14 @@ export default function Header() {
             <span className="hidden sm:inline">{open ? "Close" : "Menu"}</span>
           </button>
 
-          <Logo showName={false} />
+          <Logo hideTextOnMobile />
 
           <Link
-            href={enquireHref}
+            href={contactHref}
             onClick={() => setOpen(false)}
-            className="justify-self-end rounded-full bg-accent px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white transition-colors hover:bg-accent-deep sm:px-5 sm:py-2.5 sm:text-xs"
+            className="justify-self-end whitespace-nowrap rounded-full bg-accent px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white transition-colors hover:bg-accent-deep sm:px-5 sm:py-2.5 sm:text-xs"
           >
-            Enquire
+            {contactLabel}
           </Link>
         </div>
       </header>
@@ -134,15 +134,7 @@ export default function Header() {
                 className="space-y-6 text-sm lg:text-right"
               >
                 <p className="text-xs font-semibold uppercase tracking-[0.3em] text-accent-deep">{site.tagline}</p>
-                <div className="space-y-1.5 text-muted">
-                  <a href={`mailto:${site.email}`} className="block hover:text-ink">
-                    {site.email}
-                  </a>
-                  <a href={phoneHref} className="block hover:text-ink">
-                    {site.phone}
-                  </a>
-                  <p>{site.address}</p>
-                </div>
+                <p className="text-muted">{site.address}</p>
                 <a
                   href={site.linkedin}
                   target="_blank"

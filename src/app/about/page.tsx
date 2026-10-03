@@ -20,7 +20,7 @@ const facts = [
   { label: "Industries", value: "Energy & Chemicals" },
 ];
 
-const sectors = ["Upstream oil & gas", "Renewables", "Midstream", "Refining", "Specialty chemicals"];
+const sectors = ["Upstream oil & gas", "Renewables", "Midstream", "Refining", "Chemicals"];
 
 const services = [
   {
@@ -42,7 +42,6 @@ const services = [
     title: "Strategic Development",
     description:
       "Early-stage conceptual engineering and alternative evaluation supported by rigorous Front-End Loading (FEL), techno-economic assessments, and life cycle analyses (LCA). This includes rigorous process simulation and equipment rating using industry-standard tools.",
-    tools: ["Aspen Plus", "Aspen HYSYS", "Aspen EDR", "HTRI"],
   },
 ];
 
@@ -88,7 +87,25 @@ export default function AboutPage() {
           </p>
         </Reveal>
 
-        <dl className="mt-16 grid border-t border-line sm:grid-cols-3">
+        <div className="mt-20">
+          <RevealLines
+            as="h2"
+            className={`text-[clamp(2rem,4.5vw,3.75rem)] ${heading}`}
+            lines={[
+              <span key="model">
+                From the <span className="text-accent">model</span> to the field
+              </span>,
+            ]}
+          />
+          <Reveal delay={0.15} className="mt-5 max-w-2xl">
+            <p className="text-lg leading-relaxed text-muted">
+              To help process scale up, controls, troubleshoot and optimize, at the same time improve system
+              reliability.
+            </p>
+          </Reveal>
+        </div>
+
+        <dl className="mt-12 grid border-t border-line sm:grid-cols-3">
           {facts.map((fact, i) => (
             <Reveal
               key={fact.label}
@@ -138,14 +155,14 @@ export default function AboutPage() {
       </section>
 
       <section className="mx-auto mt-28 w-full max-w-7xl px-6 lg:px-12">
-        <dl className="grid grid-cols-2 border-y border-line lg:grid-cols-4">
+        <dl className="grid border-y border-line sm:grid-cols-3">
           {stats.map((stat, i) => (
             <Reveal
               key={stat.label}
               delay={0.08 * i}
-              className={`flex flex-col-reverse py-10 pr-4 ${i % 2 ? "border-l border-line pl-6" : ""} ${
-                i > 1 ? "border-t border-line lg:border-t-0" : ""
-              } ${i === 2 ? "lg:border-l lg:pl-6" : ""}`}
+              className={`flex flex-col-reverse justify-end py-10 sm:px-8 sm:first:pl-0 ${
+                i > 0 ? "border-t border-line sm:border-l sm:border-t-0" : ""
+              }`}
             >
               <dt className="mt-3 text-xs font-semibold uppercase tracking-[0.2em] text-muted">{stat.label}</dt>
               <dd className={`text-[clamp(2.75rem,6vw,5rem)] text-accent ${heading}`}>{stat.value}</dd>
@@ -186,7 +203,7 @@ export default function AboutPage() {
         </div>
       </section>
 
-      <section className="border-t border-line bg-white">
+      <section className="border-t border-line bg-surface">
         <div className="mx-auto max-w-7xl px-6 py-28 lg:px-12">
           <div className="grid gap-10 lg:grid-cols-2 lg:items-end">
             <div>
@@ -225,18 +242,7 @@ export default function AboutPage() {
                   <h3 className="text-2xl font-semibold uppercase tracking-tight transition-transform duration-500 group-hover:translate-x-2 sm:text-3xl">
                     {service.title}
                   </h3>
-                  <div>
-                    <p className="leading-relaxed text-muted">{service.description}</p>
-                    {service.tools && (
-                      <ul className="mt-5 flex flex-wrap gap-2">
-                        {service.tools.map((tool) => (
-                          <li key={tool} className="rounded-full border border-line bg-paper px-3 py-1 font-mono text-xs">
-                            {tool}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
+                  <p className="leading-relaxed text-muted">{service.description}</p>
                 </article>
               </Reveal>
             ))}
@@ -254,7 +260,7 @@ export default function AboutPage() {
             {specialities.map((item) => (
               <li
                 key={item}
-                className="flex items-center gap-2 rounded-full border border-line bg-white px-4 py-2 text-[15px] transition-colors hover:border-accent/50"
+                className="flex items-center gap-2 rounded-full border border-line bg-surface px-4 py-2 text-[15px] transition-colors hover:border-accent/50"
               >
                 <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-accent" />
                 {item}

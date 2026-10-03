@@ -26,7 +26,7 @@ function Field({ name, label, type = "text", required = false }: { name: string;
   );
 }
 
-export default function EnquiryForm() {
+export default function ContactForm() {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
 
@@ -36,7 +36,7 @@ export default function EnquiryForm() {
     const accessKey = process.env.NEXT_PUBLIC_WEB3FORMS_ACCESS_KEY;
 
     if (!accessKey) {
-      setError(`The enquiry form isn't connected yet. Please email us at ${site.email}.`);
+      setError("The contact form isn't connected yet. Please reach us on LinkedIn.");
       setStatus("error");
       return;
     }
@@ -44,7 +44,7 @@ export default function EnquiryForm() {
     setStatus("sending");
     const data = new FormData(form);
     data.append("access_key", accessKey);
-    data.append("subject", `New enquiry from ${data.get("name")} — ${site.name} website`);
+    data.append("subject", `New message from ${data.get("name")} — ${site.name} website`);
     data.append("from_name", `${site.name} website`);
 
     try {
@@ -54,7 +54,7 @@ export default function EnquiryForm() {
       form.reset();
       setStatus("sent");
     } catch {
-      setError(`Something went wrong while sending. Please try again or email us at ${site.email}.`);
+      setError("Something went wrong while sending. Please try again in a moment.");
       setStatus("error");
     }
   }
@@ -84,14 +84,14 @@ export default function EnquiryForm() {
             Thank you.
           </h2>
           <p className="mt-4 max-w-md text-lg leading-relaxed text-muted">
-            Your enquiry has been sent. We&apos;ll get back to you shortly.
+            Your message has been sent. We&apos;ll get back to you shortly.
           </p>
           <button
             type="button"
             onClick={() => setStatus("idle")}
             className="mt-10 self-start text-xs font-semibold uppercase tracking-[0.2em] text-accent-deep underline underline-offset-8 hover:text-ink"
           >
-            Send another enquiry
+            Send another message
           </button>
         </motion.div>
       ) : (
@@ -144,13 +144,13 @@ export default function EnquiryForm() {
               disabled={status === "sending"}
               className="group inline-flex items-center justify-center gap-3 rounded-full bg-accent px-8 py-4 text-xs font-semibold uppercase tracking-[0.2em] text-white transition-colors hover:bg-accent-deep disabled:opacity-60"
             >
-              {status === "sending" ? "Sending…" : "Send enquiry"}
+              {status === "sending" ? "Sending…" : "Send message"}
               <svg viewBox="0 0 24 24" className="h-4 w-4 transition-transform group-hover:translate-x-1" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M5 12h14M13 6l6 6-6 6" />
               </svg>
             </button>
             <p className="text-sm text-muted" aria-live="polite">
-              {status === "error" ? <span className="text-accent-deep">{error}</span> : "Your details go straight to our engineering team."}
+              {status === "error" && <span className="text-accent-deep">{error}</span>}
             </p>
           </div>
         </motion.form>

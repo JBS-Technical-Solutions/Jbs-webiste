@@ -43,8 +43,8 @@ const benefits = [
     text: "See the real-time efficiency and health of every asset against its design and its best-ever performance.",
   },
   {
-    title: "Prediction",
-    text: "Forecast how equipment will perform next week, next month or next campaign — and plan around it.",
+    title: "Scale-Up",
+    text: "What critical variable should be tracked and maintained for equivalent or better performance while going from lab to pilot to commercial scale.",
   },
   {
     title: "Fault detection",
@@ -78,15 +78,15 @@ export default function DigitalTwinsPage() {
           className={`mt-6 text-[clamp(2.6rem,7vw,7rem)] ${heading}`}
           lines={[
             "A living model",
-            <span key="machine">
-              of every <span className="text-accent">machine</span>
+            <span key="system">
+              of every <span className="text-accent">system</span>
             </span>,
             "you run.",
           ]}
         />
         <Reveal delay={0.4} className="mt-10 max-w-2xl">
           <p className="text-lg leading-relaxed text-muted">
-            A digital twin is a digital model of real equipment. It runs alongside the actual machine, continuously
+            A digital twin is a digital model of real equipment. It runs alongside the actual system, continuously
             monitoring how it performs and predicting how it will behave next.
           </p>
         </Reveal>
@@ -95,11 +95,9 @@ export default function DigitalTwinsPage() {
       <section className="mx-auto w-full max-w-7xl px-6 pb-28 lg:px-12">
         <div className="grid gap-8 lg:grid-cols-2 lg:items-end">
           <div>
-            <RevealLines as="p" className={label} lines={["Twins we've built"]} />
             <RevealLines
               as="h2"
-              delay={0.1}
-              className={`mt-5 text-[clamp(2.4rem,5vw,4.5rem)] ${heading}`}
+              className={`text-[clamp(2.4rem,5vw,4.5rem)] ${heading}`}
               lines={["Explore a", <span key="twin" className="text-accent">digital twin</span>]}
             />
           </div>
@@ -133,7 +131,7 @@ export default function DigitalTwinsPage() {
         </div>
       </section>
 
-      <section className="border-y border-line bg-white">
+      <section className="border-y border-line bg-surface">
         <div className="mx-auto max-w-7xl px-6 py-28 lg:px-12">
           <RevealLines as="p" className={label} lines={["What you gain"]} />
           <RevealLines
@@ -160,8 +158,8 @@ export default function DigitalTwinsPage() {
       <section className="px-6 pt-28 lg:px-12">
         <Reveal className="relative mx-auto h-[60svh] min-h-[380px] max-w-7xl overflow-hidden rounded-3xl">
           <PlantVideo />
-          <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-t from-ink/70 via-ink/10 to-transparent" />
-          <p className="absolute inset-x-0 bottom-0 p-8 text-[clamp(1.5rem,3.5vw,2.75rem)] font-semibold uppercase leading-[0.95] tracking-[-0.03em] text-paper sm:p-12">
+          <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+          <p className="absolute inset-x-0 bottom-0 p-8 text-[clamp(1.5rem,3.5vw,2.75rem)] font-semibold uppercase leading-[0.95] tracking-[-0.03em] text-white sm:p-12">
             Real equipment. Real data.
             <br />
             <span className="text-peach">A model that keeps learning.</span>
@@ -192,7 +190,7 @@ export default function DigitalTwinsPage() {
           {ingredients.map((item, i) => (
             <Reveal key={item.title} delay={0.1 * i} className="relative">
               {i > 0 && <Operator symbol="+" />}
-              <div className="h-full rounded-2xl border border-line bg-white p-8">
+              <div className="h-full rounded-2xl border border-line bg-surface p-8">
                 <span className="font-mono text-xs text-muted">0{i + 1}</span>
                 <h3 className="mt-6 text-xl font-semibold uppercase tracking-tight">{item.title}</h3>
                 <p className="mt-3 text-[15px] leading-relaxed text-muted">{item.text}</p>

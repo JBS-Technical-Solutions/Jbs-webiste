@@ -69,7 +69,7 @@ function HeatExchanger() {
   );
 }
 
-function MethanolReactor() {
+function MethanolReformer() {
   return (
     <>
       <Line d="M160 72 Q160 40 200 40 Q240 40 240 72 V228 Q240 260 200 260 Q160 260 160 228 Z" />
@@ -148,7 +148,7 @@ function Pump() {
 
 const diagrams: Record<Kind, () => React.JSX.Element> = {
   "heat-exchanger": HeatExchanger,
-  "methanol-reactor": MethanolReactor,
+  "methanol-reformer": MethanolReformer,
   pump: Pump,
 };
 

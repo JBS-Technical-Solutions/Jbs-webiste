@@ -1,19 +1,19 @@
 import type { Metadata } from "next";
-import EnquiryForm from "@/components/EnquiryForm";
+import ContactForm from "@/components/ContactForm";
 import RevealLines from "@/components/motion/RevealLines";
 import Reveal from "@/components/motion/Reveal";
-import { phoneHref, site } from "@/lib/site";
+import { contactLabel, site } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "Enquire",
+  title: contactLabel,
   description: "Tell us about your process challenge — the JBS Technical Solutions team will get back to you.",
 };
 
-export default function EnquirePage() {
+export default function ContactPage() {
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-16 px-6 pb-28 pt-40 lg:grid-cols-[1fr_1.3fr] lg:gap-24 lg:px-12 lg:pt-48">
       <div>
-        <RevealLines as="p" className="text-xs font-semibold uppercase tracking-[0.3em] text-accent-deep" lines={["Enquire"]} />
+        <RevealLines as="p" className="text-xs font-semibold uppercase tracking-[0.3em] text-accent-deep" lines={[contactLabel]} />
         <RevealLines
           as="h1"
           delay={0.1}
@@ -34,22 +34,6 @@ export default function EnquirePage() {
 
         <Reveal delay={0.5}>
           <dl className="mt-14 space-y-6 border-t border-line pt-8">
-            <div>
-              <dt className="text-xs font-semibold uppercase tracking-[0.25em] text-muted">Email</dt>
-              <dd className="mt-1.5">
-                <a href={`mailto:${site.email}`} className="text-lg transition-colors hover:text-accent-deep">
-                  {site.email}
-                </a>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs font-semibold uppercase tracking-[0.25em] text-muted">Phone</dt>
-              <dd className="mt-1.5">
-                <a href={phoneHref} className="text-lg transition-colors hover:text-accent-deep">
-                  {site.phone}
-                </a>
-              </dd>
-            </div>
             <div>
               <dt className="text-xs font-semibold uppercase tracking-[0.25em] text-muted">Headquarters</dt>
               <dd className="mt-1.5 text-lg">{site.address}</dd>
@@ -72,7 +56,7 @@ export default function EnquirePage() {
       </div>
 
       <Reveal delay={0.3}>
-        <EnquiryForm />
+        <ContactForm />
       </Reveal>
     </section>
   );

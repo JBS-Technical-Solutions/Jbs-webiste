@@ -1,7 +1,7 @@
 import Link from "next/link";
 import Logo from "./Logo";
 import Reveal from "./motion/Reveal";
-import { enquireHref, nav, phoneHref, site } from "@/lib/site";
+import { contactHref, contactLabel, nav, site } from "@/lib/site";
 
 export default function Footer() {
   return (
@@ -9,10 +9,7 @@ export default function Footer() {
       <div className="mx-auto grid max-w-7xl gap-12 px-6 py-16 md:grid-cols-[1.6fr_1fr_1.2fr] lg:px-12">
         <Reveal>
           <Logo />
-          <p className="mt-6 text-2xl font-semibold uppercase leading-tight tracking-tight text-accent-deep">
-            {site.tagline}
-          </p>
-          <p className="mt-3 max-w-xs text-sm leading-relaxed text-muted">
+          <p className="mt-6 max-w-xs text-sm leading-relaxed text-muted">
             Data science, digital twins and process engineering for the energy and chemical industries.
           </p>
         </Reveal>
@@ -28,8 +25,8 @@ export default function Footer() {
               </li>
             ))}
             <li>
-              <Link href={enquireHref} className="transition-colors hover:text-accent-deep">
-                Enquire
+              <Link href={contactHref} className="transition-colors hover:text-accent-deep">
+                {contactLabel}
               </Link>
             </li>
           </ul>
@@ -38,16 +35,6 @@ export default function Footer() {
         <Reveal delay={0.2}>
           <h2 className="text-xs font-semibold uppercase tracking-[0.25em] text-muted">Contact</h2>
           <ul className="mt-5 space-y-2.5 text-[15px]">
-            <li>
-              <a href={`mailto:${site.email}`} className="transition-colors hover:text-accent-deep">
-                {site.email}
-              </a>
-            </li>
-            <li>
-              <a href={phoneHref} className="transition-colors hover:text-accent-deep">
-                {site.phone}
-              </a>
-            </li>
             <li className="text-muted">{site.address}</li>
             <li>
               <a

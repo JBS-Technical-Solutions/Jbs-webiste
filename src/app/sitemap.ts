@@ -1,8 +1,8 @@
 import type { MetadataRoute } from "next";
-import { enquireHref, nav, site } from "@/lib/site";
+import { contactHref, nav, site } from "@/lib/site";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const paths = ["/", ...nav.map((item) => item.href), enquireHref];
+  const paths = ["/", ...nav.map((item) => item.href), contactHref];
   return paths.map((path) => ({
     url: `${site.url}${path === "/" ? "" : path}`,
     changeFrequency: "monthly",

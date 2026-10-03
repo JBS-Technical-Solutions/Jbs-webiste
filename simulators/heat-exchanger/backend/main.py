@@ -83,8 +83,8 @@ MODEL_META = {
 
 
 class TwinInputs(BaseModel):
-    m_air_kgh: float = Field(gt=0, description="Hot air flow, shell side (kg/h)")
-    m_water_kgh: float = Field(gt=0, description="Cooling water flow, tube side (kg/h)")
+    m_air_kgh: float = Field(gt=0, description="Hot Fluid, shell side (kg/h)")
+    m_water_kgh: float = Field(gt=0, description="Cold Fluid, tube side (kg/h)")
     T_air_in: float = Field(description="Air inlet temperature (°C)")
     T_water_in: float = Field(ge=1, le=99, description="Water inlet temperature (°C)")
 

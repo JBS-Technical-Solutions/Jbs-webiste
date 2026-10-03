@@ -7,20 +7,20 @@ import { AnimatePresence, motion } from "motion/react";
 import { useLenis } from "lenis/react";
 import EquipmentDiagram from "./EquipmentDiagram";
 import { easeInOut, easeOut } from "./motion/easing";
-import { enquireHref } from "@/lib/site";
+import { contactHref, contactLabel } from "@/lib/site";
 import { models, type EquipmentModel } from "@/lib/models";
 
 const HeatExchangerTwin = dynamic(() => import("./hx/HeatExchangerTwin"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-full flex-col items-center justify-center gap-4 text-paper/70">
+    <div className="flex h-full flex-col items-center justify-center gap-4 text-white/70">
       <span className="h-10 w-10 animate-spin rounded-full border-2 border-white/15 border-t-accent" />
       <p className="text-xs font-semibold uppercase tracking-[0.25em]">Loading simulation</p>
     </div>
   ),
 });
 
-const order: EquipmentModel["slug"][] = ["heat-exchanger", "pump", "methanol-reactor"];
+const order: EquipmentModel["slug"][] = ["heat-exchanger", "pump", "methanol-reformer"];
 const launchModels = order.map((slug) => models.find((m) => m.slug === slug)!);
 
 export default function TwinLauncher() {
@@ -39,7 +39,7 @@ export default function TwinLauncher() {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: "0px 0px -10% 0px" }}
             transition={{ duration: 0.9, delay: 0.1 * i, ease: easeOut }}
-            className="relative flex flex-col overflow-hidden rounded-3xl border border-line bg-white transition-colors duration-500 has-[button:hover]:border-accent/60"
+            className="relative flex flex-col overflow-hidden rounded-3xl border border-line bg-surface transition-colors duration-500 has-[button:hover]:border-accent/60"
           >
             <button
               type="button"
@@ -51,7 +51,7 @@ export default function TwinLauncher() {
                 <span className="absolute left-5 top-5 font-mono text-xs text-muted">0{i + 1}</span>
                 <span
                   aria-hidden="true"
-                  className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded-full border border-line bg-white text-lg transition-all duration-500 group-hover:rotate-45 group-hover:border-accent group-hover:bg-accent group-hover:text-white"
+                  className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded-full border border-line bg-surface text-lg transition-all duration-500 group-hover:rotate-45 group-hover:border-accent group-hover:bg-accent group-hover:text-white"
                 >
                   +
                 </span>
@@ -126,13 +126,13 @@ function SimulationModal({ model, onClose }: { model: EquipmentModel | null; onC
           role="dialog"
           aria-modal="true"
           aria-labelledby="simulation-title"
-          className="fixed inset-0 z-[70] flex flex-col bg-ink"
+          className="fixed inset-0 z-[70] flex flex-col bg-black"
           initial={{ clipPath: "inset(100% 0% 0% 0%)" }}
           animate={{ clipPath: "inset(0% 0% 0% 0%)" }}
           exit={{ clipPath: "inset(100% 0% 0% 0%)" }}
           transition={{ duration: 0.8, ease: easeInOut }}
         >
-          <div className="flex items-center justify-between gap-4 border-b border-white/10 px-4 py-3 text-paper sm:px-6">
+          <div className="flex items-center justify-between gap-4 border-b border-white/10 px-4 py-3 text-white sm:px-6">
             <div className="flex min-w-0 items-center gap-3">
               <span className="relative flex h-2 w-2 shrink-0">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
@@ -178,7 +178,7 @@ function TwinModal({ model, onClose }: { model: EquipmentModel | null; onClose: 
           exit={{ opacity: 0, transition: { duration: 0.4, delay: 0.2 } }}
           transition={{ duration: 0.4 }}
         >
-          <div aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-ink/50 backdrop-blur-sm" />
+          <div aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
 
           <motion.div
             role="dialog"
@@ -195,7 +195,7 @@ function TwinModal({ model, onClose }: { model: EquipmentModel | null; onClose: 
               type="button"
               onClick={onClose}
               aria-label="Close"
-              className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full border border-line bg-white/80 backdrop-blur transition-colors hover:border-accent hover:bg-accent hover:text-white sm:right-6 sm:top-6"
+              className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full border border-line bg-surface/80 backdrop-blur transition-colors hover:border-accent hover:bg-accent hover:text-white sm:right-6 sm:top-6"
             >
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
                 <path d="M6 6l12 12M18 6L6 18" />
@@ -248,7 +248,7 @@ function TwinModal({ model, onClose }: { model: EquipmentModel | null; onClose: 
                   <h3 className="mt-8 text-xs font-semibold uppercase tracking-[0.25em]">What it tracks</h3>
                   <ul className="mt-3 flex flex-wrap gap-2">
                     {model.tracks.map((item) => (
-                      <li key={item} className="rounded-full border border-line bg-white px-3 py-1.5 text-[13px]">
+                      <li key={item} className="rounded-full border border-line bg-surface px-3 py-1.5 text-[13px]">
                         {item}
                       </li>
                     ))}
@@ -268,18 +268,11 @@ function TwinModal({ model, onClose }: { model: EquipmentModel | null; onClose: 
                 <Item>
                   <div className="mt-10 flex flex-wrap gap-3">
                     <Link
-                      href={`/models#${model.slug}`}
+                      href={contactHref}
                       onClick={onClose}
                       className="rounded-full bg-accent px-6 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-white transition-colors hover:bg-accent-deep"
                     >
-                      View full model
-                    </Link>
-                    <Link
-                      href={enquireHref}
-                      onClick={onClose}
-                      className="rounded-full border border-line bg-white px-6 py-3 text-xs font-semibold uppercase tracking-[0.18em] transition-colors hover:border-accent hover:text-accent-deep"
-                    >
-                      Enquire
+                      {contactLabel}
                     </Link>
                   </div>
                 </Item>

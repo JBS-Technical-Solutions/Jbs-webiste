@@ -53,8 +53,6 @@ const organization = {
   description,
   url: site.url,
   logo: `${site.url}/logo.png`,
-  email: site.email,
-  telephone: site.phone,
   address: {
     "@type": "PostalAddress",
     addressRegion: "TX",

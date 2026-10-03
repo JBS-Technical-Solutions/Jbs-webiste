@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRef } from "react";
 import { motion, useScroll, useTransform } from "motion/react";
 import { useLenis } from "lenis/react";
@@ -8,7 +9,7 @@ import RevealLines from "./motion/RevealLines";
 import Reveal from "./motion/Reveal";
 import { useIntroDone } from "./motion/Providers";
 import { easeOut } from "./motion/easing";
-import { phoneHref, site } from "@/lib/site";
+import { contactHref, contactLabel, site } from "@/lib/site";
 
 export default function HomeHero() {
   const ref = useRef<HTMLElement>(null);
@@ -53,28 +54,28 @@ export default function HomeHero() {
           as="h1"
           start={introDone}
           delay={0.3}
-          className="mt-6 text-[clamp(2.6rem,6.5vw,6.5rem)] font-semibold uppercase leading-[0.92] tracking-[-0.035em]"
+          className="mt-6 text-[clamp(2.1rem,5.2vw,5.25rem)] font-semibold uppercase leading-[0.92] tracking-[-0.035em]"
           lines={[
-            "Every critical",
+            "Every system and",
+            "each process component,",
             <span key="mirrored">
-              machine, <span className="text-accent">mirrored</span>
+              <span className="text-accent">mirrored</span> in real time.
             </span>,
-            "in real time.",
           ]}
         />
 
         <div className="mt-10 flex flex-col gap-8 sm:flex-row sm:items-end sm:justify-between">
           <Reveal start={introDone} delay={0.8} y={20} className="max-w-xl">
             <p className="text-lg leading-relaxed text-ink/70">
-              {site.name} creates digital twins of critical process equipment — helping chemical plants predict
-              failures, save energy and run at their best.
+              {site.name} creates digital twins of critical unit operations and process equipment — helping chemical
+              plants predict failures, save energy and run at their best.
             </p>
-            <a
-              href={phoneHref}
-              className="mt-6 inline-flex items-center rounded-full border border-line bg-white/80 px-6 py-3 text-sm font-medium backdrop-blur transition-colors hover:border-accent hover:text-accent-deep"
+            <Link
+              href={contactHref}
+              className="mt-6 inline-flex items-center rounded-full border border-line bg-surface/80 px-6 py-3 text-sm font-medium backdrop-blur transition-colors hover:border-accent hover:text-accent-deep"
             >
-              {site.phone}
-            </a>
+              {contactLabel}
+            </Link>
           </Reveal>
 
           <Reveal start={introDone} delay={1} y={20}>
@@ -82,7 +83,7 @@ export default function HomeHero() {
               type="button"
               onClick={() => lenis?.scrollTo("footer", { duration: 1.6 })}
               aria-label="Scroll down"
-              className="group flex h-14 w-14 items-center justify-center rounded-full border border-ink/20 bg-white/60 backdrop-blur transition-colors hover:border-accent hover:bg-accent hover:text-white"
+              className="group flex h-14 w-14 items-center justify-center rounded-full border border-ink/20 bg-surface/60 backdrop-blur transition-colors hover:border-accent hover:bg-accent hover:text-white"
             >
               <svg viewBox="0 0 24 24" className="h-5 w-5 transition-transform duration-500 group-hover:translate-y-0.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M12 5v14M6 13l6 6 6-6" />

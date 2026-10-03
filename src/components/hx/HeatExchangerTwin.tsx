@@ -1,8 +1,7 @@
 "use client";
 
-import Image from "next/image";
-import Link from "next/link";
 import { useEffect, useState } from "react";
+import Logo from "../Logo";
 import ExchangerDiagram from "./ExchangerDiagram";
 import ModelHistograms from "./ModelHistograms";
 import {
@@ -19,7 +18,7 @@ import {
 import "./hx.css";
 
 const MODELS: Record<ModelKind, { title: string; blurb: string }> = {
-  physics: { title: "Physics", blurb: "Dittus–Boelter + Kern → U → E-NTU" },
+  physics: { title: "Physics", blurb: "Kern Method → HTCs → Overall U → NTU Method → Outlet Temps" },
   serial: { title: "Serial Hybrid", blurb: "ML predicts U, physics rates outlets" },
   parallel: { title: "Parallel Hybrid", blurb: "Physics + ML residual corrections" },
   pinn: { title: "PINN", blurb: "Physics-informed neural twin" },
@@ -108,17 +107,11 @@ export default function HeatExchangerTwin({ className = "" }: { className?: stri
       <div className="grid-glow" aria-hidden />
 
       <header className="topbar">
-        <Link href="/" className="brand-lockup" aria-label="JBS Technical Solutions — home">
-          <Image src="/logo.png" alt="" width={1251} height={842} className="brand-logo" />
-          <div>
-            <p className="brand-name">JBS Technical Solutions</p>
-            <p className="brand-sub">Shell &amp; Tube Digital Twin</p>
-          </div>
-        </Link>
+        <span className="pill muted">
+          TEMA Type A · {info?.geometry.N_tubes ?? 160} tubes · L {info?.geometry.L_m ?? 6} m
+        </span>
+        <Logo className="topbar-logo" />
         <div className="top-meta">
-          <span className="pill muted">
-            TEMA Type A · {info?.geometry.N_tubes ?? 160} tubes · L {info?.geometry.L_m ?? 6} m
-          </span>
           <span className={`pill status ${status}`}>
             <i aria-hidden />
             {status === "online" ? "Python models online" : status === "checking" ? "Connecting…" : "Backend offline"}
@@ -179,7 +172,7 @@ export default function HeatExchangerTwin({ className = "" }: { className?: stri
             </div>
 
             <label className="field">
-              <span>Hot air flow (shell)</span>
+              <span>Hot Fluid (shell)</span>
               <div className="field-row">
                 <input
                   type="number"
@@ -194,7 +187,7 @@ export default function HeatExchangerTwin({ className = "" }: { className?: stri
             </label>
 
             <label className="field">
-              <span>Cooling water flow (tubes)</span>
+              <span>Cold Fluid (tubes)</span>
               <div className="field-row">
                 <input
                   type="number"

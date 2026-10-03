@@ -1,5 +1,5 @@
 export type EquipmentModel = {
-  slug: "heat-exchanger" | "methanol-reactor" | "pump";
+  slug: "heat-exchanger" | "methanol-reformer" | "pump";
   name: string;
   category: string;
   summary: string;
@@ -31,12 +31,12 @@ export const models: EquipmentModel[] = [
     ],
   },
   {
-    slug: "methanol-reactor",
-    name: "Methanol Reactor",
+    slug: "methanol-reformer",
+    name: "Methanol Reformer",
     category: "Reaction engineering",
     summary: "Conversion, temperature profile and catalyst health in one view.",
     description:
-      "The methanol reactor twin models syngas conversion through the catalyst bed using reaction kinetics and heat balances, calibrated continuously against plant data. It tracks the temperature profile and catalyst activity over time, helping operators push methanol yield safely, avoid hot spots and plan catalyst change-outs with confidence.",
+      "The methanol reformer twin models syngas conversion through the catalyst bed using reaction kinetics and heat balances, calibrated continuously against plant data. It tracks the temperature profile and catalyst activity over time, helping operators push methanol yield safely, avoid hot spots and plan catalyst change-outs with confidence.",
     tracks: [
       "Syngas composition (H₂, CO, CO₂)",
       "Bed temperature profile & hot spots",

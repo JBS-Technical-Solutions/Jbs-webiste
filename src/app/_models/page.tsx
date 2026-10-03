@@ -1,3 +1,5 @@
+// Unpublished: the leading underscore keeps this out of routing. Rename the folder to `models`,
+// add it back to `nav` in lib/site.ts and drop the /models redirect in next.config.ts to restore it.
 import type { Metadata } from "next";
 import CtaBanner from "@/components/CtaBanner";
 import EquipmentDiagram from "@/components/EquipmentDiagram";
@@ -8,7 +10,7 @@ import { models } from "@/lib/models";
 export const metadata: Metadata = {
   title: "Models",
   description:
-    "Digital twin models built by JBS Technical Solutions for heat exchangers, methanol reactors and centrifugal pumps.",
+    "Digital twin models built by JBS Technical Solutions for heat exchangers, methanol reformers and centrifugal pumps.",
 };
 
 const label = "text-xs font-semibold uppercase tracking-[0.3em] text-accent-deep";
@@ -44,7 +46,7 @@ export default function ModelsPage() {
               <a
                 key={model.slug}
                 href={`#${model.slug}`}
-                className="rounded-full border border-line bg-white px-4 py-2 text-sm transition-colors hover:border-accent hover:text-accent-deep"
+                className="rounded-full border border-line bg-surface px-4 py-2 text-sm transition-colors hover:border-accent hover:text-accent-deep"
               >
                 <span className="mr-2 font-mono text-xs text-muted">0{i + 1}</span>
                 {model.name}
