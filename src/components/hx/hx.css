@@ -705,7 +705,7 @@
 
 .hx-app .hydraulics dl {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.7rem 1rem;
   margin: 0;
 }
@@ -919,7 +919,7 @@
 }
 
 .hx-app .mh-bar {
-  background: var(--mc);
+  background: var(--vc);
 }
 
 .hx-app .mh-labels {
@@ -932,8 +932,9 @@
   flex-direction: column;
   align-items: center;
   min-width: 0;
-  color: var(--ink-dim);
+  color: var(--vc);
   font-size: 0.64rem;
+  font-weight: 600;
   text-align: center;
   line-height: 1.2;
 }

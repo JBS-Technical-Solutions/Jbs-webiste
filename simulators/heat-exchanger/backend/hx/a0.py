@@ -6,6 +6,7 @@ website always runs the notebook's own physics (restart the backend after editin
 """
 
 import contextlib
+import inspect
 import io
 import json
 from pathlib import Path
@@ -26,6 +27,9 @@ def _load_rate_function():
 
 
 _a0_rate = _load_rate_function()
+_a0_defaults = inspect.signature(_a0_rate).parameters
+P_AIR_IN_KPA = _a0_defaults["P_air_in"].default / 1000.0
+P_WATER_IN_KPA = _a0_defaults["P_water_in"].default / 1000.0
 
 
 def a0_physics(T_air_in, m_dot_air, T_water_in, m_dot_water):
@@ -46,5 +50,7 @@ def a0_physics(T_air_in, m_dot_air, T_water_in, m_dot_water):
             "Re_shell": r["Re_Shell (Air)"],
             "dP_tube_kPa": r["dP_Tube_Water (kPa)"],
             "dP_shell_kPa": r["dP_Shell_Air (kPa)"],
+            "P_air_in_kPa": P_AIR_IN_KPA,
+            "P_water_in_kPa": P_WATER_IN_KPA,
         },
     }

@@ -129,7 +129,7 @@ export default function HeatExchangerTwin({ className = "" }: { className?: stri
           </h2>
           <p className="lede">
             Four engines — physics E-NTU, serial ML→physics, parallel residuals, and a physics-informed neural
-            network — served live from the Python backend on the same shell-side air / tube-side water duty.
+            network — served live from the Python backend on the same shell-side hot fluid / tube-side cold fluid duty.
           </p>
         </section>
 
@@ -202,7 +202,7 @@ export default function HeatExchangerTwin({ className = "" }: { className?: stri
             </label>
 
             <label className="field">
-              <span>Air inlet temperature</span>
+              <span>Hot fluid inlet temperature</span>
               <div className="field-row">
                 <input
                   type="number"
@@ -216,7 +216,7 @@ export default function HeatExchangerTwin({ className = "" }: { className?: stri
             </label>
 
             <label className="field">
-              <span>Water inlet temperature</span>
+              <span>Cold fluid inlet temperature</span>
               <div className="field-row">
                 <input
                   type="number"
@@ -264,12 +264,12 @@ export default function HeatExchangerTwin({ className = "" }: { className?: stri
                 <em>W/m²·K</em>
               </article>
               <article className="metric">
-                <span>Air outlet</span>
+                <span>Hot fluid outlet</span>
                 <strong>{fmt(result?.T_air_out)}</strong>
                 <em>°C · Δ {fmt(deltaAir)}°</em>
               </article>
               <article className="metric">
-                <span>Water outlet</span>
+                <span>Cold fluid outlet</span>
                 <strong>{fmt(result?.T_water_out)}</strong>
                 <em>°C · Δ +{fmt(deltaWater)}°</em>
               </article>
@@ -292,8 +292,8 @@ export default function HeatExchangerTwin({ className = "" }: { className?: stri
 
             {result?.physics_ref && (
               <p className="phys-ref">
-                vs pure physics: U {signed(result.U - result.physics_ref.U)} W/m²·K · Air out{" "}
-                {signed(result.T_air_out - result.physics_ref.T_air_out)}° · Water out{" "}
+                vs pure physics: U {signed(result.U - result.physics_ref.U)} W/m²·K · Hot fluid out{" "}
+                {signed(result.T_air_out - result.physics_ref.T_air_out)}° · Cold fluid out{" "}
                 {signed(result.T_water_out - result.physics_ref.T_water_out)}°
               </p>
             )}
@@ -301,32 +301,40 @@ export default function HeatExchangerTwin({ className = "" }: { className?: stri
             {result && (
               <div className="hydraulics">
                 <p className="hydraulics-head">
-                  Film coefficients &amp; pressure drop
+                  Inlet pressures, film coefficients &amp; pressure drop
                   {result.model !== "physics" && <em> · from A0 physics rating at these inputs</em>}
                 </p>
                 <dl>
                   <div>
-                    <dt>h inside (water)</dt>
+                    <dt>P inlet (cold fluid)</dt>
+                    <dd>{fmt(result.hydraulics.P_water_in_kPa, 1)} <small>kPa</small></dd>
+                  </div>
+                  <div>
+                    <dt>P inlet (hot fluid)</dt>
+                    <dd>{fmt(result.hydraulics.P_air_in_kPa, 1)} <small>kPa</small></dd>
+                  </div>
+                  <div>
+                    <dt>h inside (cold fluid)</dt>
                     <dd>{fmt(result.hydraulics.h_i, 1)} <small>W/m²·K</small></dd>
                   </div>
                   <div>
-                    <dt>h outside (air)</dt>
+                    <dt>h outside (hot fluid)</dt>
                     <dd>{fmt(result.hydraulics.h_o, 1)} <small>W/m²·K</small></dd>
                   </div>
                   <div>
-                    <dt>ΔP tube (water)</dt>
+                    <dt>ΔP tube (cold fluid)</dt>
                     <dd>{fmt(result.hydraulics.dP_tube_kPa, 3)} <small>kPa</small></dd>
                   </div>
                   <div>
-                    <dt>ΔP shell (air)</dt>
+                    <dt>ΔP shell (hot fluid)</dt>
                     <dd>{fmt(result.hydraulics.dP_shell_kPa, 3)} <small>kPa</small></dd>
                   </div>
                   <div>
-                    <dt>Re tube (water)</dt>
+                    <dt>Re tube (cold fluid)</dt>
                     <dd>{fmt(result.hydraulics.Re_tube, 0)}</dd>
                   </div>
                   <div>
-                    <dt>Re shell (air)</dt>
+                    <dt>Re shell (hot fluid)</dt>
                     <dd>{fmt(result.hydraulics.Re_shell, 0)}</dd>
                   </div>
                 </dl>
@@ -362,8 +370,8 @@ export default function HeatExchangerTwin({ className = "" }: { className?: stri
                   <tr>
                     <th>Model</th>
                     <th>U (W/m²·K)</th>
-                    <th>Air out (°C)</th>
-                    <th>Water out (°C)</th>
+                    <th>Hot fluid out (°C)</th>
+                    <th>Cold fluid out (°C)</th>
                     <th>Duty (kW)</th>
                   </tr>
                 </thead>

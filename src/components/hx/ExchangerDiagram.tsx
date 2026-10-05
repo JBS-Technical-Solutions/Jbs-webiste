@@ -120,16 +120,16 @@ export default function ExchangerDiagram({ T_air_in, T_air_out, T_water_in, T_wa
         <line x1={SHELL.x1} y1={SHELL.y0 - 4} x2={SHELL.x1} y2={SHELL.y1 + 4} className="hx-tubesheet" />
 
         <text x="555" y="16" textAnchor="middle" fill={cAin} className="hx-label">
-          {label("Air in", T_air_in)}
+          {label("Hot fluid in", T_air_in)}
         </text>
         <text x="175" y="250" textAnchor="start" fill={cAout} className="hx-label">
-          {label("Air out", T_air_out)}
+          {label("Hot fluid out", T_air_out)}
         </text>
-        <text x="100" y="244" textAnchor="middle" fill={cWin} className="hx-label">
-          {label("Water in", T_water_in)}
+        <text x="8" y="244" textAnchor="start" fill={cWin} className="hx-label">
+          {label("Cold fluid in", T_water_in)}
         </text>
         <text x="100" y="26" textAnchor="middle" fill={cWout} className="hx-label">
-          {label("Water out", T_water_out)}
+          {label("Cold fluid out", T_water_out)}
         </text>
         <text x="100" y="106" textAnchor="middle" className="hx-tag">
           pass 2

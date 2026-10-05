@@ -1,6 +1,7 @@
 """
 TEMA Type A shell, 2-pass tubes (triangular pitch) — physics shared by all models.
-Ported from A0-PhysicsModelOnly / A2-SerialHybrid / ParallelHybridModel / PINN_TEMA_Udata.
+Ported from A0-PhysicsModelOnly / A2-SerialHybrid / ParallelHybridModel / PINN_TEMA_Udata
+(revision with pressure-dependent fluid properties).
 """
 
 import math
@@ -16,6 +17,15 @@ B_BAFFLE = 0.8
 K_WALL = 45.0
 R_FI = 0.00015
 R_FO = 0.00035
+
+# Inlet pressures (absolute, Pa). data.csv has no pressure columns, so every row uses these.
+ATM = 101325.0
+P_AIR_IN = 1.5 * ATM
+P_WATER_IN = 2.0 * ATM
+
+# Highest water outlet in data.csv: above this the water side boils, which the
+# liquid-only models can't represent, so every model's Twout is capped here.
+T_WATER_OUT_CAP = 134.6
 
 D_I = D_O - 2.0 * WALL_THICKNESS
 A_O_TOTAL = N_TUBES * (math.pi * D_O * L_TUBE)
@@ -37,12 +47,24 @@ GEOMETRY = {
     "baffle_m": B_BAFFLE,
     "A_o_m2": A_O_TOTAL,
     "D_e_m": D_E,
+    "P_air_in_kPa": P_AIR_IN / 1000.0,
+    "P_water_in_kPa": P_WATER_IN / 1000.0,
 }
 
 
-def get_water_properties(T_c):
-    T = max(1.0, min(float(T_c), 100.0))
-    rho = 1000.0 - 0.0178 * abs(T - 4.0) ** 1.7
+def get_water_saturation_temp(P):
+    """Boiling point of water (°C) at P (Pa); Antoine equation, 1–100 °C and 99–374 °C ranges."""
+    P_mmHg = P / 133.322
+    if P_mmHg >= 760.0:
+        A, B, C = 8.14019, 1810.94, 244.485
+    else:
+        A, B, C = 8.07131, 1730.63, 233.426
+    return B / (A - math.log10(P_mmHg)) - C
+
+
+def get_water_properties(T_c, P=P_WATER_IN):
+    T = max(1.0, min(float(T_c), get_water_saturation_temp(P)))
+    rho = (1000.0 - 0.0178 * abs(T - 4.0) ** 1.7) * (1.0 + (P - ATM) / 2.2e9)
     mu = 0.00179 * math.exp(-0.0247 * T)
     cp = 4182.0 - 0.25 * T
     k = 0.57 + 0.0017 * T
@@ -50,9 +72,9 @@ def get_water_properties(T_c):
     return rho, mu, cp, k, Pr
 
 
-def get_air_properties(T_c, P_atm=101325.0):
+def get_air_properties(T_c, P=P_AIR_IN):
     T_k = T_c + 273.15
-    rho = P_atm / (287.05 * T_k)
+    rho = P / (287.05 * T_k)
     mu_ref, T_ref, S = 1.716e-5, 273.15, 110.4
     mu = mu_ref * ((T_k / T_ref) ** 1.5) * ((T_ref + S) / (T_k + S))
     cp = 1005.0 + 0.05 * T_c
@@ -61,8 +83,11 @@ def get_air_properties(T_c, P_atm=101325.0):
     return rho, mu, cp, k, Pr
 
 
-def rate_shell_and_tube_1_2(T_air_in, m_dot_air, T_water_in, m_dot_water, tol=1e-5, max_iter=100, omega=0.5):
-    """Film coefficients (Dittus–Boelter / Kern) -> U -> 1-2 pass E-NTU. Mass flows in kg/s."""
+def rate_shell_and_tube_1_2(
+    T_air_in, m_dot_air, T_water_in, m_dot_water,
+    P_air_in=P_AIR_IN, P_water_in=P_WATER_IN, tol=1e-5, max_iter=100, omega=0.5,
+):
+    """Film coefficients (Dittus–Boelter / Kern) -> U -> 1-2 pass E-NTU. Mass flows in kg/s, pressures in Pa."""
     T_h_out = T_air_in - 30.0
     T_c_out = T_water_in + 10.0
 
@@ -70,8 +95,8 @@ def rate_shell_and_tube_1_2(T_air_in, m_dot_air, T_water_in, m_dot_water, tol=1e
         T_h_avg = 0.5 * (T_air_in + T_h_out)
         T_c_avg = 0.5 * (T_water_in + T_c_out)
 
-        rho_w, mu_w, cp_w, k_w, Pr_w = get_water_properties(T_c_avg)
-        _, mu_a, cp_a, k_a, Pr_a = get_air_properties(T_h_avg)
+        rho_w, mu_w, cp_w, k_w, Pr_w = get_water_properties(T_c_avg, P_water_in)
+        _, mu_a, cp_a, k_a, Pr_a = get_air_properties(T_h_avg, P_air_in)
 
         u_i = m_dot_water / (rho_w * A_FLOW_TUBE)
         Re_i = (rho_w * u_i * D_I) / mu_w
@@ -118,8 +143,11 @@ def rate_shell_and_tube_1_2(T_air_in, m_dot_air, T_water_in, m_dot_water, tol=1e
     }
 
 
-def physics_outlets_from_U(U_o, T_air_in, T_water_in, m_dot_air, m_dot_water, tol=1e-5, max_iter=100, omega=0.5):
-    """1-2 pass E-NTU outlets for a supplied U (serial hybrid). Mass flows in kg/s."""
+def physics_outlets_from_U(
+    U_o, T_air_in, T_water_in, m_dot_air, m_dot_water,
+    P_air_in=P_AIR_IN, P_water_in=P_WATER_IN, tol=1e-5, max_iter=100, omega=0.5,
+):
+    """1-2 pass E-NTU outlets for a supplied U (serial hybrid). Mass flows in kg/s, pressures in Pa."""
     T_h_out = T_air_in - 30.0
     T_c_out = T_water_in + 10.0
 
@@ -127,8 +155,8 @@ def physics_outlets_from_U(U_o, T_air_in, T_water_in, m_dot_air, m_dot_water, to
         T_h_avg = 0.5 * (T_air_in + T_h_out)
         T_c_avg = 0.5 * (T_water_in + T_c_out)
 
-        _, _, cp_w, _, _ = get_water_properties(T_c_avg)
-        _, _, cp_a, _, _ = get_air_properties(T_h_avg)
+        _, _, cp_w, _, _ = get_water_properties(T_c_avg, P_water_in)
+        _, _, cp_a, _, _ = get_air_properties(T_h_avg, P_air_in)
 
         C_h = m_dot_air * cp_a
         C_c = m_dot_water * cp_w

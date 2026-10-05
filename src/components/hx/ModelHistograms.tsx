@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import type { BackendInfo, ModelKind, TwinOutput } from "./api";
 
 type Range = { min: number; max: number };
@@ -8,15 +9,16 @@ type Variable = {
   key: string;
   label: string;
   unit: string;
+  color: string;
   value: (r: TwinOutput) => number;
   range: (info: BackendInfo) => Range | undefined;
 };
 
 const VARIABLES: Variable[] = [
-  { key: "U", label: "U", unit: "W/m²·K", value: (r) => r.U, range: (x) => x.output_ranges?.U },
-  { key: "T_air_out", label: "Air out", unit: "°C", value: (r) => r.T_air_out, range: (x) => x.output_ranges?.T_air_out },
-  { key: "T_water_out", label: "Water out", unit: "°C", value: (r) => r.T_water_out, range: (x) => x.output_ranges?.T_water_out },
-  { key: "Q_kW", label: "Duty", unit: "kW", value: (r) => r.Q_kW, range: (x) => x.output_ranges?.Q_kW },
+  { key: "U", label: "U", unit: "W/m²·K", color: "#a78bfa", value: (r) => r.U, range: (x) => x.output_ranges?.U },
+  { key: "T_air_out", label: "Hot fluid out", unit: "°C", color: "#ff7a3d", value: (r) => r.T_air_out, range: (x) => x.output_ranges?.T_air_out },
+  { key: "T_water_out", label: "Cold fluid out", unit: "°C", color: "#4da3ff", value: (r) => r.T_water_out, range: (x) => x.output_ranges?.T_water_out },
+  { key: "Q_kW", label: "Duty", unit: "kW", color: "#4ade80", value: (r) => r.Q_kW, range: (x) => x.output_ranges?.Q_kW },
 ];
 
 function short(n: number) {
@@ -88,6 +90,7 @@ export default function ModelHistograms({
                     <div
                       key={v.key}
                       className={`mh-col ${outside ? "outside" : ""}`}
+                      style={{ "--vc": v.color } as CSSProperties}
                       title={`${v.label}: ${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${v.unit} · ${raw.toFixed(0)}% of data range (${short(min)} – ${short(max)})`}
                     >
                       <span className="mh-value">{short(value)}</span>
@@ -102,7 +105,7 @@ export default function ModelHistograms({
 
             <div className="mh-labels">
               {VARIABLES.map((v) => (
-                <span key={v.key}>
+                <span key={v.key} style={{ "--vc": v.color } as CSSProperties}>
                   {v.label}
                   <small>{v.unit}</small>
                 </span>

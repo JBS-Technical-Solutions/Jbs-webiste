@@ -34,6 +34,8 @@ export type TwinOutput = {
     Re_shell: number;
     dP_tube_kPa: number;
     dP_shell_kPa: number;
+    P_air_in_kPa: number;
+    P_water_in_kPa: number;
   };
   extra: Record<string, number>;
   warnings: string[];

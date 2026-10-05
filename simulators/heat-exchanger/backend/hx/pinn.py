@@ -5,7 +5,10 @@ import math
 import torch
 import torch.nn as nn
 
-from .physics import A_FLOW_TUBE, A_O_TOTAL, A_S, D_E, D_I, D_O, K_WALL, R_FI, R_FO
+from .physics import (
+    A_FLOW_TUBE, A_O_TOTAL, A_S, ATM, D_E, D_I, D_O, K_WALL, P_AIR_IN, P_WATER_IN, R_FI, R_FO,
+    get_water_saturation_temp,
+)
 
 
 class HeatExchangerPINN(nn.Module):
@@ -22,18 +25,18 @@ class HeatExchangerPINN(nn.Module):
         return self.net(x)
 
 
-def _water_props(T_c):
-    T = torch.clamp(T_c, 1.0, 100.0)
-    rho = 1000.0 - 0.0178 * torch.abs(T - 4.0) ** 1.7
+def _water_props(T_c, P=P_WATER_IN):
+    T = torch.clamp(T_c, 1.0, get_water_saturation_temp(P))
+    rho = (1000.0 - 0.0178 * torch.abs(T - 4.0) ** 1.7) * (1.0 + (P - ATM) / 2.2e9)
     mu = 0.00179 * torch.exp(-0.0247 * T)
     cp = 4182.0 - 0.25 * T
     k = 0.57 + 0.0017 * T
     return rho, mu, cp, k, (cp * mu) / k
 
 
-def _air_props(T_c, P_atm=101325.0):
+def _air_props(T_c, P=P_AIR_IN):
     T_k = T_c + 273.15
-    rho = P_atm / (287.05 * T_k)
+    rho = P / (287.05 * T_k)
     mu_ref, T_ref, S = 1.716e-5, 273.15, 110.4
     mu = mu_ref * ((T_k / T_ref) ** 1.5) * ((T_ref + S) / (T_k + S))
     cp = 1005.0 + 0.05 * T_c

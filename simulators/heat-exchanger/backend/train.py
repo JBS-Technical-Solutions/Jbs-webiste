@@ -5,6 +5,7 @@ Same data prep, features, splits and hyper-parameters as the notebooks:
   - Serial:   A2-SerialHybrid.ipynb      (LinearRegression vs RandomForest on Udata)
   - Parallel: ParallelHybridModel.ipynb  (multi-output residuals vs physics)
   - PINN:     PINN_TEMA_Udata.ipynb      (MLP + TEMA physics loss)
+Test scores use the water outlet capped at T_WATER_OUT_CAP, like the notebooks' clip cell.
 
 Run:  .venv\\Scripts\\python train.py
 """
@@ -28,7 +29,7 @@ from sklearn.preprocessing import StandardScaler
 
 from hx.a0 import a0_physics
 from hx.data import DATA_PATH, load_dataset
-from hx.physics import GEOMETRY, physics_outlets_from_U, rate_shell_and_tube_1_2
+from hx.physics import GEOMETRY, T_WATER_OUT_CAP, physics_outlets_from_U, rate_shell_and_tube_1_2
 from hx.pinn import HeatExchangerPINN, physics_residuals
 
 warnings.filterwarnings("ignore")
@@ -51,7 +52,7 @@ def output_scores(df_test, U, Ta, Tw):
     return {
         "U": scores(df_test["Udata"], U),
         "T_air_out": scores(df_test["T_air_out"], Ta),
-        "T_water_out": scores(df_test["T_water_out"], Tw),
+        "T_water_out": scores(df_test["T_water_out"], np.minimum(np.asarray(Tw, float), T_WATER_OUT_CAP)),
     }
 
 

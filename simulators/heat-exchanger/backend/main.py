@@ -21,7 +21,9 @@ from pydantic import BaseModel, Field
 from hx.a0 import NOTEBOOK as A0_NOTEBOOK
 from hx.a0 import a0_physics
 from hx.data import DATA_PATH, load_dataset
-from hx.physics import A_O_TOTAL, duty_ntu_eps, physics_outlets_from_U, rate_shell_and_tube_1_2
+from hx.physics import (
+    A_O_TOTAL, T_WATER_OUT_CAP, duty_ntu_eps, physics_outlets_from_U, rate_shell_and_tube_1_2,
+)
 from hx.pinn import HeatExchangerPINN
 
 ARTIFACTS = Path(__file__).resolve().parent / "artifacts"
@@ -61,7 +63,7 @@ ModelKind = Literal["physics", "serial", "parallel", "pinn"]
 MODEL_META = {
     "physics": (
         "Physics (E-NTU)",
-        "Dittus–Boelter + Kern → U → 1-2 pass E-NTU outlets",
+        "Kern Method → HTCs → Overall U → NTU Method → Outlet Temps",
         A0_NOTEBOOK.name,
     ),
     "serial": (
@@ -107,6 +109,8 @@ class Hydraulics(BaseModel):
     Re_shell: float
     dP_tube_kPa: float
     dP_shell_kPa: float
+    P_air_in_kPa: float = Field(description="Shell-side (air) inlet pressure, kPa")
+    P_water_in_kPa: float = Field(description="Tube-side (water) inlet pressure, kPa")
 
 
 class TwinOutput(BaseModel):
@@ -154,10 +158,10 @@ def root():
 
 def range_warnings(i: TwinInputs) -> list[str]:
     labels = {
-        "m_air_kgh": "Air flow",
-        "m_water_kgh": "Water flow",
-        "T_air_in": "Air inlet temperature",
-        "T_water_in": "Water inlet temperature",
+        "m_air_kgh": "Hot fluid flow",
+        "m_water_kgh": "Cold fluid flow",
+        "T_air_in": "Hot fluid inlet temperature",
+        "T_water_in": "Cold fluid inlet temperature",
     }
     out = []
     for key, rng in INFO["training_ranges"].items():
@@ -171,8 +175,21 @@ def range_warnings(i: TwinInputs) -> list[str]:
 
 
 def run_model(model: ModelKind, i: TwinInputs) -> TwinOutput:
+    out = rate_model(model, i)
+    if out.physics_ref:
+        out.physics_ref.T_water_out = min(out.physics_ref.T_water_out, T_WATER_OUT_CAP)
+    if out.T_water_out > T_WATER_OUT_CAP:
+        out.warnings.append(
+            f"Cold fluid outlet {out.T_water_out:.1f} °C capped at {T_WATER_OUT_CAP:g} °C, the highest "
+            "value in the data — above it the cold fluid starts to boil."
+        )
+        out.T_water_out = T_WATER_OUT_CAP
+    return out
+
+
+def rate_model(model: ModelKind, i: TwinInputs) -> TwinOutput:
     if i.T_air_in <= i.T_water_in:
-        raise HTTPException(400, "Air inlet temperature must be higher than water inlet temperature.")
+        raise HTTPException(400, "Hot fluid inlet temperature must be higher than cold fluid inlet temperature.")
 
     m_air, m_water = i.m_air_kgh / 3600.0, i.m_water_kgh / 3600.0
     x_kgs = np.array([[m_air, m_water, i.T_air_in, i.T_water_in]])
