@@ -811,7 +811,6 @@
 
 .hx-app .mh-card {
   --axis-w: 2.3rem;
-  --input: #8fa6bf;
   padding: 0.9rem 1rem 0.75rem;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -876,8 +875,8 @@
 .hx-app .mh-bars,
 .hx-app .mh-labels {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
-  gap: 0.35rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
 }
 
 .hx-app .mh-bars {
@@ -892,16 +891,6 @@
   flex-direction: column;
   align-items: center;
   min-width: 0;
-}
-
-.hx-app .mh-col.split,
-.hx-app .mh-labels .split {
-  margin-left: 0.55rem;
-}
-
-.hx-app .mh-col.split {
-  border-left: 1px dashed var(--line);
-  padding-left: 0.35rem;
 }
 
 .hx-app .mh-value {
@@ -929,12 +918,7 @@
   transition: height 0.45s ease;
 }
 
-.hx-app .mh-col.input .mh-bar {
-  background: var(--input);
-  opacity: 0.55;
-}
-
-.hx-app .mh-col.output .mh-bar {
+.hx-app .mh-bar {
   background: var(--mc);
 }
 
@@ -954,42 +938,10 @@
   line-height: 1.2;
 }
 
-.hx-app .mh-labels span.split {
-  padding-left: 0.35rem;
-}
-
 .hx-app .mh-labels small {
   font-size: 0.56rem;
   opacity: 0.7;
   white-space: nowrap;
-}
-
-.hx-app .mh-card footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.9rem;
-  margin-top: 0.6rem;
-  color: var(--ink-dim);
-  font-size: 0.66rem;
-}
-
-.hx-app .mh-key::before {
-  content: "";
-  display: inline-block;
-  width: 0.55rem;
-  height: 0.55rem;
-  margin-right: 0.35rem;
-  border-radius: 2px;
-  vertical-align: -1px;
-}
-
-.hx-app .mh-key.input::before {
-  background: var(--input);
-  opacity: 0.55;
-}
-
-.hx-app .mh-key.output::before {
-  background: var(--mc);
 }
 
 @media (max-width: 980px) {

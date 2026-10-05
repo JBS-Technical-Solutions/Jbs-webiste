@@ -21,7 +21,7 @@ const MODELS: Record<ModelKind, { title: string; blurb: string }> = {
   physics: { title: "Physics", blurb: "Kern Method → HTCs → Overall U → NTU Method → Outlet Temps" },
   serial: { title: "Serial Hybrid", blurb: "ML predicts U, physics rates outlets" },
   parallel: { title: "Parallel Hybrid", blurb: "Physics + ML residual corrections" },
-  pinn: { title: "PINN", blurb: "Physics-informed neural twin" },
+  pinn: { title: "PINN", blurb: "Physics-Informed Neural Network" },
 };
 
 type Status = "checking" | "online" | "offline";
@@ -110,7 +110,7 @@ export default function HeatExchangerTwin({ className = "" }: { className?: stri
         <span className="pill muted">
           TEMA Type A · {info?.geometry.N_tubes ?? 160} tubes · L {info?.geometry.L_m ?? 6} m
         </span>
-        <Logo className="topbar-logo" />
+        <Logo className="topbar-logo" inverse />
         <div className="top-meta">
           <span className={`pill status ${status}`}>
             <i aria-hidden />
@@ -387,10 +387,9 @@ export default function HeatExchangerTwin({ className = "" }: { className?: stri
           </section>
         )}
 
-        {results && ranInputs && (
+        {results && (
           <ModelHistograms
             results={results}
-            inputs={ranInputs}
             info={info}
             selected={model}
             titles={{

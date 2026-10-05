@@ -52,7 +52,7 @@ export default function Header() {
           scrolled && !open ? "border-line/70 bg-paper/75 backdrop-blur-md" : "border-transparent"
         }`}
       >
-        <div className="mx-auto grid h-20 max-w-7xl grid-cols-[1fr_auto_1fr] items-center px-6 lg:px-12">
+        <div className="mx-auto grid h-20 max-w-7xl grid-cols-[auto_1fr] items-center gap-x-4 px-6 sm:grid-cols-[1fr_auto_1fr] sm:gap-x-0 lg:px-12">
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
@@ -76,12 +76,12 @@ export default function Header() {
             <span className="hidden sm:inline">{open ? "Close" : "Menu"}</span>
           </button>
 
-          <Logo hideTextOnMobile />
+          <Logo className="justify-self-start sm:justify-self-center" />
 
           <Link
             href={contactHref}
             onClick={() => setOpen(false)}
-            className="justify-self-end whitespace-nowrap rounded-full bg-accent px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white transition-colors hover:bg-accent-deep sm:px-5 sm:py-2.5 sm:text-xs"
+            className="hidden justify-self-end whitespace-nowrap rounded-full sm:inline-block bg-accent px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white transition-colors hover:bg-accent-deep sm:px-5 sm:py-2.5 sm:text-xs"
           >
             {contactLabel}
           </Link>
