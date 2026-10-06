@@ -1,0 +1,437 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import Logo from "../Logo";
+import ModelHistograms, { type HistogramVariable } from "../hx/ModelHistograms";
+import AxialProfile from "./AxialProfile";
+import ReactorDiagram from "./ReactorDiagram";
+import {
+  BACKEND_OFFLINE,
+  type BackendInfo,
+  DEFAULT_INPUTS,
+  MODEL_ORDER,
+  type ModelKind,
+  PROFILE_KEYS,
+  type TwinInputs,
+  type TwinOutput,
+  compareModels,
+  fetchInfo,
+} from "./api";
+import "../hx/hx.css";
+import "./meoh.css";
+
+const MODELS: Record<ModelKind, { title: string; blurb: string; color: string }> = {
+  physics: { title: "Physics", blurb: "LHHW kinetics → plug-flow ODEs → axial profile", color: "#6f9fd4" },
+  serial: { title: "Serial Hybrid", blurb: "Calibrated physics, ML corrects the error", color: "#3ecfcf" },
+  parallel: { title: "Parallel Hybrid", blurb: "Calibrated physics ‖ ML, blended per output", color: "#f0c75e" },
+  pinn: { title: "PINN", blurb: "Physics-Informed Neural Network", color: "#ff6a3d" },
+};
+
+const T_HEAT_DEFAULT = 275;
+
+const histogramVariables = (info: BackendInfo | null): HistogramVariable<TwinOutput>[] => [
+  {
+    key: "T_out",
+    label: "Outlet T",
+    unit: "°C",
+    color: "#ff7a3d",
+    value: (r) => r.outputs?.T_10,
+    range: info?.output_ranges?.["T_1m_C"],
+  },
+  {
+    key: "X",
+    label: "Conversion",
+    unit: "%",
+    color: "#4ade80",
+    value: (r) => r.outputs?.X_pct,
+    range: info?.output_ranges?.X_overall_pct,
+  },
+  {
+    key: "P_out",
+    label: "Outlet P",
+    unit: "bar_g",
+    color: "#4da3ff",
+    value: (r) => r.outputs?.P_out_bar_g,
+    range: info?.output_ranges?.P_out_bar_g,
+  },
+  {
+    key: "Q",
+    label: "Heat duty",
+    unit: "kW",
+    color: "#a78bfa",
+    value: (r) => r.outputs?.Q_kW,
+    range: info?.output_ranges?.Q_total_kW,
+  },
+];
+
+type Status = "checking" | "online" | "offline";
+
+function fmt(n: number | null | undefined, digits = 2) {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toLocaleString(undefined, {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+  });
+}
+
+function signed(n: number, digits = 2) {
+  return `${n >= 0 ? "+" : ""}${fmt(n, digits)}`;
+}
+
+const h2Produced = (r: TwinOutput | null, inputs: TwinInputs | null) =>
+  r?.outputs && inputs ? 2 * inputs.F_in_kgmole_h * 1000 * (r.outputs.X_pct / 100) : null;
+
+export default function MethanolTwin({ className = "" }: { className?: string }) {
+  const [model, setModel] = useState<ModelKind>("parallel");
+  const [inputs, setInputs] = useState<TwinInputs>(DEFAULT_INPUTS);
+  const [ranInputs, setRanInputs] = useState<TwinInputs | null>(null);
+  const [results, setResults] = useState<TwinOutput[] | null>(null);
+  const [info, setInfo] = useState<BackendInfo | null>(null);
+  const [status, setStatus] = useState<Status>("checking");
+  const [error, setError] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [flash, setFlash] = useState(0);
+
+  const run = async (nextInputs = inputs) => {
+    setRunning(true);
+    setError(null);
+    try {
+      const out = await compareModels(nextInputs);
+      setResults(out);
+      setRanInputs(nextInputs);
+      setStatus("online");
+      setFlash((f) => f + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      if (e instanceof Error && e.message.startsWith(BACKEND_OFFLINE)) setStatus("offline");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const load = () =>
+    fetchInfo()
+      .then((next) => {
+        setInfo(next);
+        setStatus("online");
+        return run();
+      })
+      .catch((e) => {
+        setStatus("offline");
+        setError(e instanceof Error ? e.message : String(e));
+      });
+
+  const connect = () => {
+    setStatus("checking");
+    load();
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const result = results?.find((r) => r.model === model) ?? null;
+  const out = result?.outputs ?? null;
+  const ref = result?.physics_ref ?? null;
+  const T_heat = info?.reactor.T_heat_C ?? T_HEAT_DEFAULT;
+  const dP = out && ranInputs ? ranInputs.P_in_bar_g - out.P_out_bar_g : null;
+
+  const update = (key: keyof TwinInputs, raw: string) => {
+    setInputs((prev) => ({ ...prev, [key]: Number(raw) }));
+  };
+
+  const range = (key: keyof TwinInputs, digits: number) => {
+    const r = info?.training_ranges[key];
+    return r ? `data range ${fmt(r.min, digits)} – ${fmt(r.max, digits)}` : null;
+  };
+
+  return (
+    <div className={`hx-app meoh-app ${className}`}>
+      <div className="atmosphere" aria-hidden />
+      <div className="grid-glow" aria-hidden />
+
+      <header className="topbar">
+        <span className="pill muted">
+          Packed bed · D {info?.reactor.D_m ?? 0.1} m · L {info?.reactor.L_m ?? 1} m
+        </span>
+        <Logo className="topbar-logo" inverse />
+        <div className="top-meta">
+          <span className={`pill status ${status}`}>
+            <i aria-hidden />
+            {status === "online" ? "Python models online" : status === "checking" ? "Connecting…" : "Backend offline"}
+          </span>
+        </div>
+      </header>
+
+      <div className="stage">
+        <section className="hero-copy">
+          <p className="eyebrow">Methanol Reformer Model</p>
+          <h2 className="hero-title">
+            Feed the reactor.
+            <br />
+            <em>Watch the bed respond.</em>
+          </h2>
+          <p className="lede">
+            Methanol decomposition, CH₃OH → CO + 2H₂, in a jacket-heated packed-bed tube. Four engines — LHHW
+            physics, serial and parallel hybrids, and a physics-informed neural network — predict the axial
+            temperature profile, conversion, pressure drop and heat duty live from the Python backend.
+          </p>
+        </section>
+
+        {status === "offline" && (
+          <div className="banner error" role="alert">
+            <strong>The simulation models are offline.</strong>
+            <span>They may still be starting up. Please retry in a moment.</span>
+            <button type="button" className="preset" onClick={connect}>
+              Retry connection
+            </button>
+          </div>
+        )}
+
+        <section className="model-rail" aria-label="Model selection">
+          {MODEL_ORDER.map((id) => (
+            <button
+              key={id}
+              type="button"
+              className={`model-chip ${model === id ? "active" : ""}`}
+              aria-pressed={model === id}
+              onClick={() => setModel(id)}
+            >
+              <span className="chip-title">{MODELS[id].title}</span>
+              <span className="chip-blurb">{MODELS[id].blurb}</span>
+            </button>
+          ))}
+        </section>
+
+        <div className="workspace">
+          <form
+            className="panel inputs"
+            onSubmit={(e) => {
+              e.preventDefault();
+              run(inputs);
+            }}
+          >
+            <div className="panel-head">
+              <h3>Feed conditions</h3>
+              <p>Pure methanol feed to the reactor inlet</p>
+            </div>
+
+            <label className="field">
+              <span>Inlet temperature</span>
+              <div className="field-row">
+                <input
+                  type="number"
+                  step="10"
+                  min="1"
+                  value={inputs.T_in_C}
+                  onChange={(e) => update("T_in_C", e.target.value)}
+                />
+                <em>°C</em>
+              </div>
+              {range("T_in_C", 0) && <small className="field-hint">{range("T_in_C", 0)}</small>}
+            </label>
+
+            <label className="field">
+              <span>Inlet pressure</span>
+              <div className="field-row">
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={inputs.P_in_bar_g}
+                  onChange={(e) => update("P_in_bar_g", e.target.value)}
+                />
+                <em>bar_g</em>
+              </div>
+              {range("P_in_bar_g", 1) && <small className="field-hint">{range("P_in_bar_g", 1)}</small>}
+            </label>
+
+            <label className="field">
+              <span>Methanol flow</span>
+              <div className="field-row">
+                <input
+                  type="number"
+                  step="0.05"
+                  min="0.01"
+                  value={inputs.F_in_kgmole_h}
+                  onChange={(e) => update("F_in_kgmole_h", e.target.value)}
+                />
+                <em>kgmole/h</em>
+              </div>
+              {range("F_in_kgmole_h", 1) && <small className="field-hint">{range("F_in_kgmole_h", 1)}</small>}
+            </label>
+
+            <dl className="rx-specs">
+              <div>
+                <dt>Jacket temperature</dt>
+                <dd>{fmt(T_heat, 0)} °C</dd>
+              </div>
+              <div>
+                <dt>Bed voidage</dt>
+                <dd>{fmt(info?.reactor.epsilon ?? 0.33, 2)}</dd>
+              </div>
+            </dl>
+
+            {error && status !== "offline" && (
+              <div className="banner error compact" role="alert">
+                {error}
+              </div>
+            )}
+
+            <button type="submit" className="cta" disabled={running || status === "offline"}>
+              {running ? "Computing…" : "Run digital twin"}
+            </button>
+          </form>
+
+          <section className="panel results" key={flash}>
+            <div className="panel-head">
+              <h3>{result?.modelLabel ?? "Outputs"}</h3>
+              <p>{result?.approach ?? "Run the twin to see model outputs."}</p>
+              {result && <span className="source-tag">Source: {result.source}</span>}
+            </div>
+
+            <ReactorDiagram
+              T_in={ranInputs?.T_in_C}
+              P_in={ranInputs?.P_in_bar_g}
+              profile={PROFILE_KEYS.map((k) => out?.[k])}
+              P_out={out?.P_out_bar_g}
+              T_heat={T_heat}
+              animate={out != null}
+            />
+
+            {result?.error && (
+              <div className="banner error compact" role="alert">
+                {result.error}
+              </div>
+            )}
+
+            <div className="metrics">
+              <article className="metric hero-metric">
+                <span>Outlet temperature</span>
+                <strong>{fmt(out?.T_10)}</strong>
+                <em>°C at 1.0 m</em>
+              </article>
+              <article className="metric">
+                <span>Methanol conversion</span>
+                <strong>{fmt(out?.X_pct, out && out.X_pct < 10 ? 3 : 2)}</strong>
+                <em>%</em>
+              </article>
+              <article className="metric">
+                <span>H₂ produced</span>
+                <strong>{fmt(h2Produced(result, ranInputs), 2)}</strong>
+                <em>mol/h</em>
+              </article>
+              <article className="metric">
+                <span>Outlet pressure</span>
+                <strong>{fmt(out?.P_out_bar_g, 3)}</strong>
+                <em>bar_g</em>
+              </article>
+              <article className="metric">
+                <span>Pressure drop</span>
+                <strong>{fmt(dP != null ? dP * 1000 : null, 1)}</strong>
+                <em>mbar</em>
+              </article>
+              <article className="metric">
+                <span>Heat duty</span>
+                <strong>{fmt(out?.Q_kW, 3)}</strong>
+                <em>kW · negative = heat lost</em>
+              </article>
+            </div>
+
+            {out && ref && (
+              <p className="phys-ref">
+                vs calibrated physics{result?.eta != null ? ` (η ${result.eta.toExponential(3)})` : ""}: T out{" "}
+                {signed(out.T_10 - ref.T_10)}° · conversion {signed(out.X_pct - ref.X_pct, 3)} pts · P out{" "}
+                {signed(out.P_out_bar_g - ref.P_out_bar_g, 3)} bar · duty {signed(out.Q_kW - ref.Q_kW, 3)} kW
+              </p>
+            )}
+
+            {result && result.warnings.length > 0 && (
+              <ul className="banner warn">
+                {result.warnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            )}
+
+            <footer className="result-foot">
+              <span>CH₃OH → CO + 2H₂</span>
+              <span>Trained on {info?.rows ?? "—"} operating points</span>
+            </footer>
+          </section>
+        </div>
+
+        {results && ranInputs && (
+          <AxialProfile
+            series={results.map((r) => ({
+              model: r.model,
+              label: MODELS[r.model].title,
+              color: MODELS[r.model].color,
+              temps: [ranInputs.T_in_C, ...PROFILE_KEYS.map((k) => r.outputs?.[k])],
+            }))}
+            selected={model}
+            onSelect={setModel}
+            T_heat={T_heat}
+          />
+        )}
+
+        {results && (
+          <section className="panel compare">
+            <div className="panel-head">
+              <h3>All models at these inputs</h3>
+              <p>Click a row to show that model in the outputs panel.</p>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>T 0.2 m (°C)</th>
+                    <th>T 0.6 m (°C)</th>
+                    <th>T out (°C)</th>
+                    <th>Conversion (%)</th>
+                    <th>P out (bar_g)</th>
+                    <th>Heat duty (kW)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.map((r) => (
+                    <tr
+                      key={r.model}
+                      className={r.model === model ? "active" : ""}
+                      onClick={() => setModel(r.model)}
+                    >
+                      <td>{MODELS[r.model].title}</td>
+                      <td>{fmt(r.outputs?.T_02)}</td>
+                      <td>{fmt(r.outputs?.T_06)}</td>
+                      <td>{fmt(r.outputs?.T_10)}</td>
+                      <td>{fmt(r.outputs?.X_pct, 3)}</td>
+                      <td>{fmt(r.outputs?.P_out_bar_g, 3)}</td>
+                      <td>{fmt(r.outputs?.Q_kW, 3)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {results && (
+          <ModelHistograms
+            results={results}
+            variables={histogramVariables(info)}
+            selected={model}
+            titles={{
+              physics: MODELS.physics.title,
+              serial: MODELS.serial.title,
+              parallel: MODELS.parallel.title,
+              pinn: MODELS.pinn.title,
+            }}
+            onSelect={setModel}
+          />
+        )}
+      </div>
+    </div>
+  );
+}

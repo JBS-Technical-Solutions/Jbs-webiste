@@ -875,7 +875,7 @@
 .hx-app .mh-bars,
 .hx-app .mh-labels {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--mh-cols, 4), minmax(0, 1fr));
   gap: 0.75rem;
 }
 

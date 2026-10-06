@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Logo from "../Logo";
 import ExchangerDiagram from "./ExchangerDiagram";
-import ModelHistograms from "./ModelHistograms";
+import ModelHistograms, { type HistogramVariable } from "./ModelHistograms";
 import {
   BACKEND_OFFLINE,
   type BackendInfo,
@@ -23,6 +23,27 @@ const MODELS: Record<ModelKind, { title: string; blurb: string }> = {
   parallel: { title: "Parallel Hybrid", blurb: "Physics + ML residual corrections" },
   pinn: { title: "PINN", blurb: "Physics-Informed Neural Network" },
 };
+
+const histogramVariables = (info: BackendInfo | null): HistogramVariable<TwinOutput>[] => [
+  { key: "U", label: "U", unit: "W/m²·K", color: "#a78bfa", value: (r) => r.U, range: info?.output_ranges?.U },
+  {
+    key: "T_air_out",
+    label: "Hot fluid out",
+    unit: "°C",
+    color: "#ff7a3d",
+    value: (r) => r.T_air_out,
+    range: info?.output_ranges?.T_air_out,
+  },
+  {
+    key: "T_water_out",
+    label: "Cold fluid out",
+    unit: "°C",
+    color: "#4da3ff",
+    value: (r) => r.T_water_out,
+    range: info?.output_ranges?.T_water_out,
+  },
+  { key: "Q_kW", label: "Duty", unit: "kW", color: "#4ade80", value: (r) => r.Q_kW, range: info?.output_ranges?.Q_kW },
+];
 
 type Status = "checking" | "online" | "offline";
 
@@ -398,7 +419,7 @@ export default function HeatExchangerTwin({ className = "" }: { className?: stri
         {results && (
           <ModelHistograms
             results={results}
-            info={info}
+            variables={histogramVariables(info)}
             selected={model}
             titles={{
               physics: MODELS.physics.title,

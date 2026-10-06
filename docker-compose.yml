@@ -12,13 +12,27 @@ services:
         NEXT_PUBLIC_WEB3FORMS_ACCESS_KEY: ${NEXT_PUBLIC_WEB3FORMS_ACCESS_KEY:-}
     environment:
       HX_API_URL: http://heat-exchanger:8000
+      MEOH_API_URL: http://methanol-reformer:8000
+      PUMP_API_URL: http://water-pump:8000
     depends_on:
       - heat-exchanger
+      - methanol-reformer
+      - water-pump
     restart: unless-stopped
     logging: *logging
 
   heat-exchanger:
     build: ./simulators/heat-exchanger
+    restart: unless-stopped
+    logging: *logging
+
+  methanol-reformer:
+    build: ./simulators/methanol-reformer
+    restart: unless-stopped
+    logging: *logging
+
+  water-pump:
+    build: ./simulators/water-pump
     restart: unless-stopped
     logging: *logging
 

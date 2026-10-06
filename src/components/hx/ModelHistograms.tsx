@@ -1,67 +1,62 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import type { BackendInfo, ModelKind, TwinOutput } from "./api";
 
 type Range = { min: number; max: number };
 
-type Variable = {
+export type HistogramVariable<R> = {
   key: string;
   label: string;
   unit: string;
   color: string;
-  value: (r: TwinOutput) => number;
-  range: (info: BackendInfo) => Range | undefined;
+  value: (r: R) => number | null | undefined;
+  range?: Range;
 };
-
-const VARIABLES: Variable[] = [
-  { key: "U", label: "U", unit: "W/m²·K", color: "#a78bfa", value: (r) => r.U, range: (x) => x.output_ranges?.U },
-  { key: "T_air_out", label: "Hot fluid out", unit: "°C", color: "#ff7a3d", value: (r) => r.T_air_out, range: (x) => x.output_ranges?.T_air_out },
-  { key: "T_water_out", label: "Cold fluid out", unit: "°C", color: "#4da3ff", value: (r) => r.T_water_out, range: (x) => x.output_ranges?.T_water_out },
-  { key: "Q_kW", label: "Duty", unit: "kW", color: "#4ade80", value: (r) => r.Q_kW, range: (x) => x.output_ranges?.Q_kW },
-];
 
 function short(n: number) {
   const abs = Math.abs(n);
   if (abs >= 10000) return `${(n / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })}k`;
   if (abs >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
   if (abs >= 100) return n.toFixed(0);
-  return n.toFixed(1);
+  if (abs >= 1) return n.toFixed(1);
+  return n.toPrecision(2);
 }
 
-function fallbackRange(v: Variable, results: TwinOutput[]): Range {
-  const max = Math.max(...results.map((r) => v.value(r)));
+function fallbackRange<R>(v: HistogramVariable<R>, results: R[]): Range {
+  const values = results.map((r) => v.value(r)).filter((x): x is number => x != null && Number.isFinite(x));
+  const max = values.length ? Math.max(...values) : 1;
   return { min: 0, max: max * 1.25 || 1 };
 }
 
-export default function ModelHistograms({
+export default function ModelHistograms<K extends string, R extends { model: K }>({
   results,
-  info,
+  variables,
   selected,
   titles,
   onSelect,
 }: {
-  results: TwinOutput[];
-  info: BackendInfo | null;
-  selected: ModelKind;
-  titles: Record<ModelKind, string>;
-  onSelect: (m: ModelKind) => void;
+  results: R[];
+  variables: HistogramVariable<R>[];
+  selected: K;
+  titles: Record<K, string>;
+  onSelect: (m: K) => void;
 }) {
-  const ranges = Object.fromEntries(
-    VARIABLES.map((v) => [v.key, (info && v.range(info)) || fallbackRange(v, results)]),
-  ) as Record<string, Range>;
+  const ranges = Object.fromEntries(variables.map((v) => [v.key, v.range ?? fallbackRange(v, results)])) as Record<
+    string,
+    Range
+  >;
 
   return (
     <section className="panel model-hist">
       <div className="panel-head">
         <h3>Outputs per model</h3>
         <p>
-          One histogram per model. Each bar shows where the value sits in its data.csv range (0% = lowest, 100% =
+          One histogram per model. Each bar shows where the value sits in its data range (0% = lowest, 100% =
           highest seen in data); the actual value is written above the bar. Click a card to select that model.
         </p>
       </div>
 
-      <div className="mh-grid">
+      <div className="mh-grid" style={{ "--mh-cols": variables.length } as CSSProperties}>
         {results.map((r) => (
           <article
             key={r.model}
@@ -80,22 +75,27 @@ export default function ModelHistograms({
                 <span>0%</span>
               </div>
               <div className="mh-bars">
-                {VARIABLES.map((v) => {
+                {variables.map((v) => {
                   const value = v.value(r);
                   const { min, max } = ranges[v.key];
-                  const raw = ((value - min) / (max - min || 1)) * 100;
+                  const known = value != null && Number.isFinite(value);
+                  const raw = known ? ((value - min) / (max - min || 1)) * 100 : 0;
                   const pct = Math.min(Math.max(raw, 0), 100);
-                  const outside = raw < 0 || raw > 100;
+                  const outside = known && (raw < 0 || raw > 100);
                   return (
                     <div
                       key={v.key}
                       className={`mh-col ${outside ? "outside" : ""}`}
                       style={{ "--vc": v.color } as CSSProperties}
-                      title={`${v.label}: ${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${v.unit} · ${raw.toFixed(0)}% of data range (${short(min)} – ${short(max)})`}
+                      title={
+                        known
+                          ? `${v.label}: ${value.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${v.unit} · ${raw.toFixed(0)}% of data range (${short(min)} – ${short(max)})`
+                          : `${v.label}: no result`
+                      }
                     >
-                      <span className="mh-value">{short(value)}</span>
+                      <span className="mh-value">{known ? short(value) : "—"}</span>
                       <span className="mh-track">
-                        <span className="mh-bar" style={{ height: `${Math.max(pct, 1.5)}%` }} />
+                        {known && <span className="mh-bar" style={{ height: `${Math.max(pct, 1.5)}%` }} />}
                       </span>
                     </div>
                   );
@@ -104,7 +104,7 @@ export default function ModelHistograms({
             </div>
 
             <div className="mh-labels">
-              {VARIABLES.map((v) => (
+              {variables.map((v) => (
                 <span key={v.key} style={{ "--vc": v.color } as CSSProperties}>
                   {v.label}
                   <small>{v.unit}</small>

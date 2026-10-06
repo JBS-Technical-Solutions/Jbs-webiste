@@ -1,0 +1,203 @@
+/* Water pump simulator styles; builds on hx.css, scoped to .pump-app. */
+.pump-app .model-rail {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.pump-app .pd-pipe {
+  stroke-width: 10;
+}
+
+.pump-app .pd-casing {
+  stroke: rgba(232, 238, 246, 0.35);
+  stroke-width: 1.5;
+}
+
+.pump-app .pd-eye {
+  fill: rgba(8, 12, 18, 0.55);
+  stroke: rgba(232, 238, 246, 0.18);
+}
+
+.pump-app .pd-impeller path {
+  fill: none;
+  stroke-width: 3.5;
+  stroke-linecap: round;
+}
+
+.pump-app .pd-diagram.is-live .pd-impeller {
+  animation: pd-spin var(--spin, 1.5s) linear infinite;
+}
+
+@keyframes pd-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pump-app .pd-hub {
+  fill: #9aacc0;
+}
+
+.pump-app .pd-shaft {
+  fill: #6b7c90;
+}
+
+.pump-app .pd-fin {
+  stroke: rgba(232, 238, 246, 0.16);
+  stroke-width: 2;
+}
+
+.pump-app .pd-base,
+.pump-app .pd-foot {
+  fill: #1b2837;
+  stroke: rgba(232, 238, 246, 0.2);
+}
+
+.pump-app .pd-stem {
+  stroke: rgba(232, 238, 246, 0.45);
+  stroke-width: 2;
+}
+
+.pump-app .pd-gauge {
+  fill: #0e151e;
+  stroke: rgba(232, 238, 246, 0.55);
+  stroke-width: 1.5;
+}
+
+.pump-app .pd-gauge-arc {
+  fill: none;
+  stroke: rgba(240, 199, 94, 0.5);
+  stroke-width: 1.5;
+}
+
+.pump-app .pd-needle {
+  stroke: #ff6a3d;
+  stroke-width: 2;
+  stroke-linecap: round;
+  transition: transform 0.6s ease;
+}
+
+.pump-app .pd-sub {
+  fill: var(--ink-dim);
+  font-family: var(--hx-mono), monospace;
+  font-size: 11px;
+}
+
+.pump-app .pd-scale i {
+  background: linear-gradient(90deg, #3ecfcf, #4da3ff, #a78bfa, #ff7a3d);
+}
+
+.pump-app .panel.pc-panel {
+  margin-top: 1.1rem;
+}
+
+.pump-app .pc-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.pump-app .pc-grid {
+  stroke: var(--line);
+}
+
+.pump-app .pc-axis {
+  fill: var(--ink-dim);
+  font-family: var(--hx-mono), monospace;
+  font-size: 11px;
+}
+
+.pump-app .pc-axis-title {
+  fill: var(--ink-dim);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pump-app .pc-series {
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.2s;
+}
+
+.pump-app .pc-series:hover,
+.pump-app .pc-series.active {
+  opacity: 1;
+}
+
+.pump-app .pc-series polyline {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.pump-app .pc-series.active polyline {
+  stroke-width: 3.2;
+}
+
+.pump-app .pc-operating line {
+  stroke: currentColor;
+  stroke-dasharray: 3 4;
+  opacity: 0.6;
+}
+
+.pump-app .pc-ring {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.pump-app .pc-dot {
+  fill: currentColor;
+}
+
+.pump-app .pc-op-label {
+  fill: var(--ink);
+  font-family: var(--hx-mono), monospace;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pump-app .pc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.pump-app .pc-legend button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.pump-app .pc-legend button i {
+  width: 0.8rem;
+  height: 0.25rem;
+  border-radius: 999px;
+  background: var(--lc);
+}
+
+.pump-app .pc-legend button:hover {
+  color: var(--ink);
+}
+
+.pump-app .pc-legend button.active {
+  border-color: var(--lc);
+  color: var(--ink);
+  background: color-mix(in srgb, var(--lc) 12%, transparent);
+}
+
+@media (max-width: 980px) {
+  .pump-app .model-rail {
+    grid-template-columns: 1fr;
+  }
+}
