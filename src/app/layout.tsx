@@ -52,7 +52,7 @@ const organization = {
   slogan: site.tagline,
   description,
   url: site.url,
-  logo: `${site.url}/logo.png`,
+  logo: `${site.url}/logo-full.png`,
   address: {
     "@type": "PostalAddress",
     addressRegion: "TX",

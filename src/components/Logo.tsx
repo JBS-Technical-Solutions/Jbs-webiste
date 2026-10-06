@@ -8,10 +8,10 @@ export function LogoLockup({ inverse = false, large = false }: LockupProps) {
   return (
     <span className={`flex items-center ${large ? "gap-4 sm:gap-6" : "gap-2.5 sm:gap-3"}`}>
       <Image
-        src="/logo.png"
+        src={inverse ? "/logo-inverse.png" : "/logo.png"}
         alt=""
-        width={1251}
-        height={842}
+        width={1035}
+        height={645}
         priority
         className={large ? "h-16 w-auto sm:h-28" : "h-10 w-auto sm:h-12"}
       />
