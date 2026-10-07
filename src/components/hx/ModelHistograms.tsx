@@ -50,10 +50,6 @@ export default function ModelHistograms<K extends string, R extends { model: K }
     <section className="panel model-hist">
       <div className="panel-head">
         <h3>Outputs per model</h3>
-        <p>
-          One histogram per model. Each bar shows where the value sits in its data range (0% = lowest, 100% =
-          highest seen in data); the actual value is written above the bar. Click a card to select that model.
-        </p>
       </div>
 
       <div className="mh-grid" style={{ "--mh-cols": variables.length } as CSSProperties}>
