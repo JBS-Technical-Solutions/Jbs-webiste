@@ -24,20 +24,8 @@ const HeatExchangerTwin = dynamic(() => import("./hx/HeatExchangerTwin"), {
   loading: LoadingSimulation,
 });
 
-const MethanolTwin = dynamic(() => import("./meoh/MethanolTwin"), {
-  ssr: false,
-  loading: LoadingSimulation,
-});
-
-const PumpTwin = dynamic(() => import("./pump/PumpTwin"), {
-  ssr: false,
-  loading: LoadingSimulation,
-});
-
-const SIMULATIONS: Record<EquipmentModel["slug"], typeof HeatExchangerTwin> = {
+const SIMULATIONS: Partial<Record<EquipmentModel["slug"], typeof HeatExchangerTwin>> = {
   "heat-exchanger": HeatExchangerTwin,
-  "methanol-reformer": MethanolTwin,
-  pump: PumpTwin,
 };
 
 const order: EquipmentModel["slug"][] = ["heat-exchanger", "pump", "methanol-reformer"];
@@ -177,11 +165,56 @@ function SimulationModal({ model, onClose }: { model: EquipmentModel | null; onC
           </div>
 
           <div data-lenis-prevent className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            {Simulation && <Simulation className="min-h-full" />}
+            {Simulation ? (
+              <Simulation className="min-h-full" />
+            ) : (
+              <WorkInProgress model={model} onClose={onClose} />
+            )}
           </div>
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+function WorkInProgress({ model, onClose }: { model: EquipmentModel; onClose: () => void }) {
+  return (
+    <motion.div
+      className="flex min-h-full flex-col items-center justify-center px-6 py-16 text-center text-white"
+      initial="hidden"
+      animate="visible"
+      variants={{ visible: { transition: { staggerChildren: 0.08, delayChildren: 0.5 } } }}
+    >
+      <Item>
+        <span className="inline-flex items-center gap-2 rounded-full border border-accent/40 bg-accent/10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.25em] text-accent">
+          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent/30 border-t-accent" aria-hidden="true" />
+          Work in progress
+        </span>
+      </Item>
+      <Item>
+        <p className="mt-8 text-xs font-semibold uppercase tracking-[0.3em] text-white/50">{model.category}</p>
+      </Item>
+      <Item>
+        <h2 className="mt-3 text-[clamp(2.25rem,6vw,4.5rem)] font-semibold uppercase leading-[0.92] tracking-[-0.035em]">
+          {model.name}
+        </h2>
+      </Item>
+      <Item>
+        <p className="mx-auto mt-6 max-w-xl leading-relaxed text-white/65">
+          We&apos;re building the live simulation for this digital twin. It will be available here soon — in the
+          meantime, talk to us about twinning your {model.name.toLowerCase()}.
+        </p>
+      </Item>
+      <Item>
+        <Link
+          href={contactHref}
+          onClick={onClose}
+          className="mt-10 inline-block rounded-full bg-accent px-6 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-white transition-colors hover:bg-accent-deep"
+        >
+          {contactLabel}
+        </Link>
+      </Item>
+    </motion.div>
   );
 }
 
