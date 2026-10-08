@@ -14,7 +14,7 @@ export default function ParallaxImage({ src, alt, className = "", imageClassName
 
   return (
     <div ref={ref} className={`relative overflow-hidden ${className}`}>
-      <motion.div style={{ y, scale }} className="absolute inset-x-0 -inset-y-[14%]">
+      <motion.div style={{ y, scale }} className="absolute inset-x-0 -inset-y-[14%] will-change-transform">
         <Image src={src} alt={alt} fill sizes={sizes} placeholder="blur" className={`object-cover ${imageClassName}`} />
       </motion.div>
     </div>

@@ -43,8 +43,8 @@ export default function TwinLauncher() {
         {launchModels.map((model, i) => (
           <motion.div
             key={model.slug}
-            initial={{ opacity: 0, y: 32 }}
-            whileInView={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, transform: "translateY(32px)" }}
+            whileInView={{ opacity: 1, transform: "translateY(0px)" }}
             viewport={{ once: true, margin: "0px 0px -10% 0px" }}
             transition={{ duration: 0.9, delay: 0.1 * i, ease: easeOut }}
             className="relative flex flex-col overflow-hidden rounded-3xl border border-line bg-surface transition-colors duration-500 has-[button:hover]:border-accent/60"

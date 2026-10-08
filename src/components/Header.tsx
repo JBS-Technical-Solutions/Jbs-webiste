@@ -16,8 +16,8 @@ const list: Variants = {
   visible: { transition: { staggerChildren: 0.07, delayChildren: 0.35 } },
 };
 const item: Variants = {
-  hidden: { y: "110%" },
-  visible: { y: "0%", transition: { duration: 0.9, ease: easeOut } },
+  hidden: { transform: "translateY(110%)" },
+  visible: { transform: "translateY(0%)", transition: { duration: 0.9, ease: easeOut } },
 };
 
 export default function Header() {
@@ -128,8 +128,8 @@ export default function Header() {
               </motion.ul>
 
               <motion.div
-                initial={{ opacity: 0, y: 24 }}
-                animate={{ opacity: 1, y: 0, transition: { delay: 0.65, duration: 0.8, ease: easeOut } }}
+                initial={{ opacity: 0, transform: "translateY(24px)" }}
+                animate={{ opacity: 1, transform: "translateY(0px)", transition: { delay: 0.65, duration: 0.8, ease: easeOut } }}
                 exit={{ opacity: 0, transition: { duration: 0.2 } }}
                 className="space-y-6 text-sm lg:text-right"
               >

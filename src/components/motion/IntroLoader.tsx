@@ -36,8 +36,8 @@ export default function IntroLoader({ onDone }: { onDone: () => void }) {
           <motion.div
             role="img"
             aria-label={`${site.name} — ${site.tagline}`}
-            initial={{ opacity: 0, scale: 0.9, filter: "blur(12px)" }}
-            animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+            initial={{ opacity: 0, transform: "scale(0.9)", filter: "blur(12px)" }}
+            animate={{ opacity: 1, transform: "scale(1)", filter: "blur(0px)" }}
             transition={{ duration: 1.2, ease: easeOut }}
           >
             <LogoLockup large />
@@ -46,8 +46,8 @@ export default function IntroLoader({ onDone }: { onDone: () => void }) {
           <div className="absolute bottom-16 left-1/2 h-px w-40 -translate-x-1/2 overflow-hidden bg-line">
             <motion.div
               className="h-full origin-left bg-accent"
-              initial={{ scaleX: 0 }}
-              animate={{ scaleX: 1 }}
+              initial={{ transform: "scaleX(0)" }}
+              animate={{ transform: "scaleX(1)" }}
               transition={{ delay: 0.3, duration: 1.7, ease: easeInOut }}
               onAnimationComplete={() => {
                 setVisible(false);

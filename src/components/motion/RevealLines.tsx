@@ -30,8 +30,8 @@ export default function RevealLines({ lines, as = "div", className, delay = 0, s
     visible: { transition: { staggerChildren: stagger, delayChildren: delay } },
   };
   const line: Variants = {
-    hidden: { y: "110%" },
-    visible: { y: "0%", transition: { duration: 1, ease: easeOut } },
+    hidden: { transform: "translateY(110%)" },
+    visible: { transform: "translateY(0%)", transition: { duration: 1, ease: easeOut } },
   };
 
   const trigger =

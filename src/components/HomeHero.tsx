@@ -23,11 +23,11 @@ export default function HomeHero() {
 
   return (
     <section ref={ref} className="relative h-svh min-h-[640px] overflow-hidden">
-      <motion.div className="absolute inset-0" style={{ y: imageY }}>
+      <motion.div className="absolute inset-0 will-change-transform" style={{ y: imageY }}>
         <motion.div
-          className="absolute inset-0"
-          initial={{ scale: 1.25 }}
-          animate={{ scale: introDone ? 1.05 : 1.25 }}
+          className="absolute inset-0 will-change-transform"
+          initial={{ transform: "scale(1.25)" }}
+          animate={{ transform: introDone ? "scale(1.05)" : "scale(1.25)" }}
           transition={{ duration: 2.4, ease: easeOut }}
         >
           <PlantVideo />
@@ -40,7 +40,7 @@ export default function HomeHero() {
 
       <motion.div
         style={{ y: contentY, opacity: contentOpacity }}
-        className="relative mx-auto flex h-full max-w-7xl flex-col justify-end px-6 pb-14 lg:px-12 lg:pb-20"
+        className="relative mx-auto flex h-full max-w-7xl flex-col justify-end px-6 pb-14 will-change-transform lg:px-12 lg:pb-20"
       >
         <RevealLines
           as="p"
@@ -72,7 +72,7 @@ export default function HomeHero() {
             </p>
             <Link
               href={contactHref}
-              className="mt-6 inline-flex items-center rounded-full border border-line bg-surface/80 px-6 py-3 text-sm font-medium backdrop-blur transition-colors hover:border-accent hover:text-accent-deep"
+              className="mt-6 inline-flex items-center rounded-full border border-line bg-surface/90 px-6 py-3 text-sm font-medium transition-colors hover:border-accent hover:text-accent-deep"
             >
               {contactLabel}
             </Link>
@@ -83,7 +83,7 @@ export default function HomeHero() {
               type="button"
               onClick={() => lenis?.scrollTo("footer", { duration: 1.6 })}
               aria-label="Scroll down"
-              className="group flex h-14 w-14 items-center justify-center rounded-full border border-ink/20 bg-surface/60 backdrop-blur transition-colors hover:border-accent hover:bg-accent hover:text-white"
+              className="group flex h-14 w-14 items-center justify-center rounded-full border border-ink/20 bg-surface/85 transition-colors hover:border-accent hover:bg-accent hover:text-white"
             >
               <svg viewBox="0 0 24 24" className="h-5 w-5 transition-transform duration-500 group-hover:translate-y-0.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M12 5v14M6 13l6 6 6-6" />
