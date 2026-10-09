@@ -149,7 +149,7 @@ export default function AboutPage() {
           <p className={label}>From the field to the model</p>
           <p className="mt-4 text-xl font-medium leading-snug tracking-tight sm:text-2xl">
             Every model we build starts with how the equipment really runs — on site, under real operating
-            conditions.
+            conditions. Let us try it.
           </p>
         </Reveal>
       </section>
