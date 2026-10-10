@@ -36,6 +36,22 @@ services:
     restart: unless-stopped
     logging: *logging
 
+  hazop-web:
+    build: ./hazop/frontend
+    depends_on:
+      - hazop-api
+    restart: unless-stopped
+    logging: *logging
+
+  hazop-api:
+    build: ./hazop/backend
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      - hazop_data:/app/data
+    restart: unless-stopped
+    logging: *logging
+
   caddy:
     image: caddy:2
     ports:
@@ -50,9 +66,11 @@ services:
       - caddy_config:/config
     depends_on:
       - web
+      - hazop-web
     restart: unless-stopped
     logging: *logging
 
 volumes:
   caddy_data:
   caddy_config:
+  hazop_data:

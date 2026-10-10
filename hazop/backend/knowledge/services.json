@@ -1,0 +1,34 @@
+{
+  "source": "Piping Spec.xlsx - Service sheet",
+  "codes": {
+    "BD": {"name": "Blow down", "phase": "gas", "hydrocarbon": true},
+    "BG": {"name": "Blanket gas", "phase": "gas", "hydrocarbon": true},
+    "CO": {"name": "Carbon dioxide", "phase": "gas", "hydrocarbon": false},
+    "CW": {"name": "Cooling water", "phase": "liquid", "hydrocarbon": false},
+    "DF": {"name": "Diesel fuel", "phase": "liquid", "hydrocarbon": true},
+    "DW": {"name": "Drain - fresh water", "phase": "liquid", "hydrocarbon": false},
+    "DH": {"name": "Drain - hydrocarbon", "phase": "liquid", "hydrocarbon": true},
+    "FL": {"name": "Flare", "phase": "gas", "hydrocarbon": true},
+    "FG": {"name": "Fuel gas", "phase": "gas", "hydrocarbon": true},
+    "GI": {"name": "Gas instrument", "phase": "gas", "hydrocarbon": true},
+    "GU": {"name": "Gas - utility", "phase": "gas", "hydrocarbon": true},
+    "GL": {"name": "Glycol", "phase": "liquid", "hydrocarbon": false},
+    "T": {"name": "Heat transfer medium", "phase": "liquid", "hydrocarbon": true},
+    "LO": {"name": "Lube oil", "phase": "liquid", "hydrocarbon": true},
+    "N": {"name": "Nitrogen", "phase": "gas", "hydrocarbon": false},
+    "P": {"name": "Process liquid & vapor", "phase": "mixed", "hydrocarbon": true},
+    "R": {"name": "Refrigerant", "phase": "mixed", "hydrocarbon": true},
+    "SV": {"name": "Safety valve discharge", "phase": "gas", "hydrocarbon": true},
+    "SO": {"name": "Seal oil", "phase": "liquid", "hydrocarbon": true},
+    "VG": {"name": "Vent gas", "phase": "gas", "hydrocarbon": true},
+    "WI": {"name": "Water - injection", "phase": "liquid", "hydrocarbon": false},
+    "W": {"name": "Water - produced", "phase": "liquid", "hydrocarbon": false}
+  },
+  "insulation": {
+    "HC": "Heat conservation",
+    "H": "Heat conservation",
+    "PP": "Personnel protection",
+    "NI": "None",
+    "ET": "Electric tracing"
+  }
+}

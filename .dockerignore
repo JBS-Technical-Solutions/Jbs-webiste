@@ -2,6 +2,7 @@
 .next
 node_modules
 simulators
+hazop
 .env*
 !.env.example
 Dockerfile

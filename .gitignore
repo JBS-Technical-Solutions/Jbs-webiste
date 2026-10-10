@@ -42,6 +42,11 @@ yarn-error.log*
 __pycache__/
 /simulators/*/backend/artifacts/
 
+# hazop studio: dependencies, build output and uploaded drawings
+/hazop/frontend/node_modules/
+/hazop/frontend/.next/
+/hazop/backend/data/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

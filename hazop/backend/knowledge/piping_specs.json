@@ -1,0 +1,43 @@
+{
+  "source": "Piping Spec.xlsx - Spec, Spec A9, Spec E3 sheets",
+  "specs": {
+    "A9A": {
+      "rating": "Class 150",
+      "sour_service": true,
+      "services": ["BD", "DH", "FL"],
+      "material": "ASTM A333 Gr.6 seamless - low temperature carbon steel",
+      "corrosion_allowance_in": 0.2,
+      "min_temp_f": -50,
+      "max_temp_f": 200,
+      "pressure_temp": [
+        {"temp_f": 100, "psig": 285},
+        {"temp_f": 200, "psig": 260}
+      ],
+      "valves": {"ball": ["VB-65N", "VB-64N", "VB-42N", "VB-14N", "VB-34N"], "globe": ["VGL-62N"], "check": ["VC-65N"], "needle": ["VN-70N"]}
+    },
+    "E3": {
+      "rating": "Class 1500",
+      "sour_service": true,
+      "services": ["BD", "DH", "GL", "P"],
+      "material": "ASTM A106 Gr.B seamless - high temperature high pressure carbon steel",
+      "corrosion_allowance_in": 0.2,
+      "min_temp_f": -20,
+      "max_temp_f": 200,
+      "pressure_temp": [
+        {"temp_f": 100, "psig": 3705},
+        {"temp_f": 150, "psig": 3540},
+        {"temp_f": 200, "psig": 3375}
+      ],
+      "valves": {"ball": ["VB-86N", "VB-88N", "VB-36N", "VB-18N", "VB-35N", "VB-112N"], "globe": ["VGL-78N", "VGL-52N"], "check": ["VC-93N", "VC-52N"], "needle": ["VN-70N"]}
+    }
+  },
+  "valve_prefixes": {
+    "VB": "Ball valve",
+    "VGL": "Globe valve",
+    "VG": "Gate valve",
+    "VC": "Check valve",
+    "VN": "Needle valve",
+    "VBF": "Butterfly valve",
+    "VP": "Plug valve"
+  }
+}
