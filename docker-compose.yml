@@ -37,7 +37,10 @@ services:
     logging: *logging
 
   hazop-web:
-    build: ./hazop/frontend
+    build:
+      context: ./hazop/frontend
+      args:
+        NEXT_PUBLIC_WEB3FORMS_ACCESS_KEY: ${NEXT_PUBLIC_WEB3FORMS_ACCESS_KEY:-}
     depends_on:
       - hazop-api
     restart: unless-stopped
@@ -54,6 +57,13 @@ services:
       AI_JOBS_PER_DAY: ${HAZOP_AI_JOBS_PER_DAY:-50}
       MAX_QUEUED_JOBS: ${HAZOP_MAX_QUEUED_JOBS:-6}
       JOB_TTL_HOURS: ${HAZOP_JOB_TTL_HOURS:-24}
+      SIGNUP_REQUIRED: ${HAZOP_SIGNUP_REQUIRED:-0}
+      SMTP_HOST: ${HAZOP_SMTP_HOST:-}
+      SMTP_PORT: ${HAZOP_SMTP_PORT:-587}
+      SMTP_USER: ${HAZOP_SMTP_USER:-}
+      SMTP_PASSWORD: ${HAZOP_SMTP_PASSWORD:-}
+      SMTP_FROM: ${HAZOP_SMTP_FROM:-}
+      ADMIN_KEY: ${HAZOP_ADMIN_KEY:-}
     volumes:
       - hazop_data:/app/data
     restart: unless-stopped

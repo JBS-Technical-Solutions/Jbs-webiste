@@ -1,8 +1,28 @@
-import type { DocumentCheck, DocumentKind, Extraction, Health, Job, NodeMode, NodePlan, StudyInfo, Worksheet } from "./types";
+import { clearAccount, storedToken } from "./account";
+import type {
+  Account,
+  CodeSent,
+  DocumentCheck,
+  DocumentKind,
+  Extraction,
+  Health,
+  Job,
+  NodeMode,
+  NodePlan,
+  StudyInfo,
+  Verified,
+  Worksheet,
+} from "./types";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "/hazop").replace(/\/$/, "");
 
+function authHeaders(): Record<string, string> {
+  const token = storedToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function handle<T>(res: Response): Promise<T> {
+  if (res.status === 401 && storedToken()) clearAccount();
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
@@ -43,13 +63,33 @@ export async function createJob(file: File, docs: ProjectDocuments, opts: JobOpt
   form.set("piping_spec", docs.pipingSpec);
   form.set("risk_matrix", docs.riskMatrix);
   docs.optional.forEach((f) => form.append("optional_docs", f));
-  return handle(await fetch(`${API_URL}/api/jobs`, { method: "POST", body: form }));
+  return handle(await fetch(`${API_URL}/api/jobs`, { method: "POST", body: form, headers: authHeaders() }));
 }
 
 export async function checkDocument(kind: DocumentKind, file: File): Promise<DocumentCheck> {
   const form = new FormData();
   form.set("file", file);
-  return handle(await fetch(`${API_URL}/api/documents/${kind}`, { method: "POST", body: form }));
+  return handle(await fetch(`${API_URL}/api/documents/${kind}`, { method: "POST", body: form, headers: authHeaders() }));
+}
+
+const postJson = (path: string, body: unknown) =>
+  fetch(`${API_URL}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+export async function requestSignupCode(mode: "signup" | "login", details: Partial<Account>): Promise<CodeSent> {
+  return handle(await postJson("/api/signup/code", { ...details, mode }));
+}
+
+export async function verifySignupCode(email: string, code: string): Promise<Verified> {
+  return handle(await postJson("/api/signup/verify", { email, code }));
+}
+
+export async function getAccount(): Promise<Account> {
+  return handle(await fetch(`${API_URL}/api/signup/me`, { cache: "no-store", headers: authHeaders() }));
+}
+
+export async function signOut() {
+  await fetch(`${API_URL}/api/signup/logout`, { method: "POST", headers: authHeaders() }).catch(() => undefined);
+  clearAccount();
 }
 
 export async function getJob(id: string): Promise<Job> {

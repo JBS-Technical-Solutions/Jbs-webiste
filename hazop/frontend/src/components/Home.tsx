@@ -7,6 +7,7 @@ import {
   Gauge,
   Layers,
   ListChecks,
+  LogOut,
   RotateCcw,
   ScanText,
   ShieldCheck,
@@ -15,7 +16,8 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import type { JobOptions, ProjectDocuments } from "@/lib/api";
-import type { Health } from "@/lib/types";
+import type { Account, Health } from "@/lib/types";
+import SignupPanel from "./SignupPanel";
 import UploadPanel from "./UploadPanel";
 import { Logo } from "./ui";
 
@@ -47,6 +49,8 @@ export default function Home({
   submitting,
   lastJob,
   onOpenLast,
+  account,
+  onSignOut,
 }: {
   health: Health | null;
   backendDown: boolean;
@@ -55,7 +59,10 @@ export default function Home({
   submitting: boolean;
   lastJob: string | null;
   onOpenLast: () => void;
+  account: Account | null;
+  onSignOut: () => void;
 }) {
+  const needsSignup = !!health?.signup_required && !account;
   return (
     <>
       {/* Hero */}
@@ -75,6 +82,24 @@ export default function Home({
               >
                 <Clock className="h-3.5 w-3.5" /> Open last worksheet
               </button>
+            )}
+            {account && (
+              <div className="inline-flex items-center gap-2 rounded-full py-1 pl-1 pr-1.5 text-xs text-slate-300 ring-1 ring-white/15">
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-gradient-to-br from-brand-500 to-cyan-500 text-[10px] font-semibold text-white">
+                  {(account.first_name[0] ?? "") + (account.last_name[0] ?? "")}
+                </span>
+                <span className="hidden max-w-[140px] truncate font-medium text-white sm:block" title={account.email}>
+                  {account.first_name}
+                </span>
+                <button
+                  onClick={onSignOut}
+                  title="Sign out"
+                  aria-label="Sign out"
+                  className="grid h-6 w-6 place-items-center rounded-full text-slate-400 transition hover:bg-white/10 hover:text-white"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                </button>
+              </div>
             )}
             <span
               className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium ring-1 ${
@@ -157,7 +182,11 @@ export default function Home({
                 </button>
               </div>
             )}
-            <UploadPanel health={health} backendDown={backendDown} submitting={submitting} onStart={onStart} />
+            {needsSignup ? (
+              <SignupPanel />
+            ) : (
+              <UploadPanel health={health} backendDown={backendDown} submitting={submitting} onStart={onStart} />
+            )}
           </motion.div>
         </div>
       </section>

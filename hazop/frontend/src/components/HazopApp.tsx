@@ -1,8 +1,9 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { createJob, getHealth, getJob, type JobOptions, type ProjectDocuments } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { accountSnapshot, parseAccount, saveAccount, subscribeAccount } from "@/lib/account";
+import { createJob, getAccount, getHealth, getJob, signOut, type JobOptions, type ProjectDocuments } from "@/lib/api";
 import type { Health, Job } from "@/lib/types";
 import Home from "./Home";
 import NodeEditor from "./NodeEditor";
@@ -40,8 +41,19 @@ export default function HazopApp() {
   const [health, setHealth] = useState<Health | null>(null);
   const [backendDown, setBackendDown] = useState(false);
   const lastJob = useSyncExternalStore(subscribeLastJob, () => localStorage.getItem(LAST_JOB_KEY), () => null);
+  const accountRaw = useSyncExternalStore(subscribeAccount, accountSnapshot, () => null);
+  const account = useMemo(() => parseAccount(accountRaw)?.user ?? null, [accountRaw]);
   const [submitting, setSubmitting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const stored = parseAccount(accountSnapshot());
+    if (!stored) return;
+    // Refresh the saved details; a 401 clears the account inside the API client.
+    getAccount()
+      .then((user) => saveAccount(stored.token, user))
+      .catch(() => undefined);
+  }, []);
 
   const checkHealth = useCallback(() => {
     getHealth()
@@ -143,6 +155,8 @@ export default function HazopApp() {
             submitting={submitting}
             lastJob={lastJob}
             onOpenLast={openLast}
+            account={account}
+            onSignOut={() => void signOut()}
           />
         )}
         {view.kind === "processing" && <ProgressView job={view.job} onCancel={goHome} />}

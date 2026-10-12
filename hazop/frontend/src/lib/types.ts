@@ -241,5 +241,26 @@ export interface Health {
   formats: string[];
   optional_formats?: string[];
   max_optional_docs?: number;
+  signup_required?: boolean;
   samples: string[];
+}
+
+export interface Account {
+  first_name: string;
+  last_name: string;
+  email: string;
+  company: string;
+  role: string;
+}
+
+export interface CodeSent {
+  email: string;
+  expires_in: number;
+  resend_after: number;
+}
+
+export interface Verified {
+  token: string;
+  user: Account;
+  new: boolean;
 }

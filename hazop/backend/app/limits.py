@@ -1,6 +1,6 @@
 """Request limits for a public deployment: per-client hourly rates, a daily AI budget and a job queue cap.
 
-All limits are off (0) unless set in .env; counters live in memory, so they reset when the engine restarts.
+All limits except sign-up codes are off (0) unless set in .env; counters live in memory, so they reset when the engine restarts.
 """
 
 import threading
@@ -10,13 +10,14 @@ from collections import defaultdict, deque
 from fastapi import HTTPException, Request
 
 from .config import (AI_JOBS_PER_DAY, MAX_QUEUED_JOBS, RATE_DOCS_PER_HOUR, RATE_EXPORTS_PER_HOUR, RATE_JOBS_PER_HOUR,
-                     TRUST_PROXY)
+                     RATE_SIGNUP_CODES_PER_HOUR, TRUST_PROXY)
 
 HOUR = 3600
 RATES = {
     "jobs": (RATE_JOBS_PER_HOUR, "analyses"),
     "documents": (RATE_DOCS_PER_HOUR, "document checks"),
     "exports": (RATE_EXPORTS_PER_HOUR, "downloads"),
+    "signup": (RATE_SIGNUP_CODES_PER_HOUR, "sign-up codes"),
 }
 
 _hits: dict[tuple[str, str], deque] = defaultdict(deque)

@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import hashlib
+import hmac
 import json
 import re
 import threading
@@ -16,8 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from . import documents, jobs, limits, risk
-from .config import BACKEND_DIR, CORS_ORIGINS, MAX_UPLOAD_MB, available_ai_providers
+from . import documents, jobs, limits, risk, signup
+from .config import ADMIN_KEY, BACKEND_DIR, CORS_ORIGINS, MAX_UPLOAD_MB, SIGNUP_REQUIRED, available_ai_providers
 from .exporters import build_docx, build_xlsx
 from .pipeline.render import SUPPORTED
 
@@ -34,6 +35,7 @@ async def _cleanup_hourly():
 
 @asynccontextmanager
 async def lifespan(_app):
+    signup.init()
     task = asyncio.create_task(_cleanup_hourly())
     yield
     task.cancel()
@@ -57,6 +59,16 @@ def _job_or_404(job_id):
     if not job:
         raise HTTPException(404, "Job not found")
     return job
+
+
+def _token(request: Request):
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    return token.strip() if scheme.lower() == "bearer" else None
+
+
+def _require_signup(request: Request):
+    if SIGNUP_REQUIRED and not signup.user_for_token(_token(request)):
+        raise HTTPException(401, "Sign up free (or sign in) to run an analysis.")
 
 
 def _options(mode, provider, page, study, node_mode):
@@ -133,8 +145,44 @@ def _describe(kind, name, parsed):
 def health():
     return {"status": "ok", "providers": available_ai_providers(), "max_upload_mb": MAX_UPLOAD_MB,
             "formats": sorted(SUPPORTED), "optional_formats": sorted(documents.OPTIONAL_EXT),
-            "max_optional_docs": documents.MAX_OPTIONAL_DOCS,
+            "max_optional_docs": documents.MAX_OPTIONAL_DOCS, "signup_required": SIGNUP_REQUIRED,
             "samples": [p.name for p in SAMPLES_DIR.glob("*") if p.is_file()]}
+
+
+@app.post("/api/signup/code")
+async def signup_code(request: Request, payload: dict[str, Any] = Body(...)):
+    """Email a 6-digit code. Body: {mode: "signup"|"login", email, first_name, last_name, company, role}."""
+    limits.check_rate(request, "signup")
+    return await run_in_threadpool(signup.request_code, payload)
+
+
+@app.post("/api/signup/verify")
+def signup_verify(payload: dict[str, Any] = Body(...)):
+    """Body: {email, code}. Returns {token, user, new}."""
+    return signup.verify_code(payload)
+
+
+@app.get("/api/signup/me")
+def signup_me(request: Request):
+    user = signup.user_for_token(_token(request))
+    if not user:
+        raise HTTPException(401, "Not signed in")
+    return user
+
+
+@app.post("/api/signup/logout")
+def signup_logout(request: Request):
+    signup.logout(_token(request))
+    return {"ok": True}
+
+
+@app.get("/api/admin/signups.xlsx")
+def admin_signups(key: str = ""):
+    if not ADMIN_KEY or not hmac.compare_digest(key.encode(), ADMIN_KEY.encode()):
+        raise HTTPException(404, "Not found")
+    return Response(signup.export_xlsx(), media_type=EXPORTS["xlsx"],
+                    headers={"Content-Disposition": f'attachment; filename="HAZOP Studio sign-ups {date.today()}.xlsx"',
+                             "Cache-Control": "no-store"})
 
 
 @app.get("/api/risk-matrix")
@@ -156,6 +204,7 @@ async def check_document(request: Request, kind: str, file: UploadFile = File(..
     """Validate a piping specification or risk matrix before the analysis starts."""
     if kind not in ("piping-spec", "risk-matrix"):
         raise HTTPException(404, "Unknown document type")
+    _require_signup(request)
     limits.check_rate(request, "documents")
     label = "piping specification" if kind == "piping-spec" else "risk matrix"
     name, data = await _read(file, label, documents.PROJECT_DOC_EXT)
@@ -175,6 +224,7 @@ async def create_job(
     study: str = Form(""),
     node_mode: str = Form("auto"),
 ):
+    _require_signup(request)
     options = _options(mode, provider, page, study, node_mode)
     limits.check_queue(jobs.active())
     limits.check_rate(request, "jobs")
@@ -206,6 +256,7 @@ def create_sample_job(request: Request, name: str = Form(""), mode: str = Form("
     sample = next((p for p in samples if p.name == name), samples[0] if samples else None)
     if not sample:
         raise HTTPException(404, "No sample drawing available")
+    _require_signup(request)
     options = _options(mode, provider, 0, study, node_mode)
     limits.check_queue(jobs.active())
     limits.check_rate(request, "jobs")
