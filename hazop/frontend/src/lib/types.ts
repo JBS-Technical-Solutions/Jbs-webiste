@@ -242,6 +242,7 @@ export interface Health {
   optional_formats?: string[];
   max_optional_docs?: number;
   signup_required?: boolean;
+  signup_verify?: boolean;
   samples: string[];
 }
 

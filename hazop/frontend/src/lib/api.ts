@@ -75,6 +75,10 @@ export async function checkDocument(kind: DocumentKind, file: File): Promise<Doc
 const postJson = (path: string, body: unknown) =>
   fetch(`${API_URL}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
+export async function registerAccount(mode: "signup" | "login", details: Partial<Account>): Promise<Verified> {
+  return handle(await postJson("/api/signup", { ...details, mode }));
+}
+
 export async function requestSignupCode(mode: "signup" | "login", details: Partial<Account>): Promise<CodeSent> {
   return handle(await postJson("/api/signup/code", { ...details, mode }));
 }

@@ -1,4 +1,5 @@
-"""Free sign-up: a person confirms their email with a 6-digit code and gets a token that unlocks the analysis.
+"""Free sign-up: a person gives their details (optionally confirming the email with a 6-digit code) and gets a
+token that unlocks the analysis.
 
 Sign-ups live in SQLite (data/signups.db); tokens and codes are stored only as hashes.
 """
@@ -47,6 +48,7 @@ DISPOSABLE_DOMAINS = {
     "mohmal.com", "sharklasers.com", "temp-mail.org", "tempail.com", "tempmail.com", "tempmail.dev", "tempr.email",
     "throwawaymail.com", "trashmail.com", "yopmail.com",
 }
+NO_ACCOUNT = "There is no account for this email yet. Sign up instead, it's free."
 FIELDS = {"first_name": ("First name", 60), "last_name": ("Last name", 60), "company": ("Company name", 120),
           "role": ("Role", 80)}
 
@@ -91,14 +93,14 @@ def _user(row) -> dict:
     return {k: row[k] for k in ("first_name", "last_name", "email", "company", "role")}
 
 
-def _email(value) -> str:
+def _email(value, block_disposable=True) -> str:
     email = str(value or "").strip().lower()
     if not email:
         raise HTTPException(400, "Enter your email address.")
     local, _, domain = email.rpartition("@")
     if len(email) > 254 or len(local) > 64 or not EMAIL_RE.match(email):
         raise HTTPException(400, "This email address is not valid. Check it for typos.")
-    if domain in DISPOSABLE_DOMAINS:
+    if block_disposable and domain in DISPOSABLE_DOMAINS:
         raise HTTPException(400, "Temporary email addresses can't be used. Enter your work email.")
     return email
 
@@ -147,7 +149,7 @@ def request_code(payload: dict) -> dict:
     with _db() as c:
         user = c.execute("SELECT first_name FROM users WHERE email = ?", (email,)).fetchone()
     if login and not user:
-        raise HTTPException(404, "There is no account for this email yet. Sign up instead, it's free.")
+        raise HTTPException(404, NO_ACCOUNT)
     if not user and not _receives_mail(email.rpartition("@")[2]):
         raise HTTPException(400, f"The domain '{email.rpartition('@')[2]}' doesn't receive email. Check the address for typos.")
 
@@ -186,26 +188,44 @@ def verify_code(payload: dict) -> dict:
                        else "That code is not correct. Ask for a new one.")
         else:
             c.execute("UPDATE codes SET code_hash = '', details = NULL WHERE email = ?", (email,))
-            stamp = _now_iso()
-            details = json.loads(row["details"]) if row["details"] else None
-            existing = c.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone()
-            if details:
-                c.execute(
-                    "INSERT INTO users (email, first_name, last_name, company, role, created_at, last_login_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(email) DO UPDATE SET first_name = excluded.first_name, "
-                    "last_name = excluded.last_name, company = excluded.company, role = excluded.role, "
-                    "last_login_at = excluded.last_login_at",
-                    (email, details["first_name"], details["last_name"], details["company"], details["role"], stamp, stamp))
-            elif existing:
-                c.execute("UPDATE users SET last_login_at = ? WHERE email = ?", (stamp, email))
-            user = c.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-            if not user:
-                problem = (404, "There is no account for this email yet. Sign up instead, it's free.")
-            else:
-                token = secrets.token_urlsafe(32)
-                c.execute("INSERT INTO tokens (token_hash, email, created_at) VALUES (?, ?, ?)", (_sha(token), email, stamp))
+            result = _sign_in(c, email, json.loads(row["details"]) if row["details"] else None)
+            if not result:
+                problem = (404, NO_ACCOUNT)
     if problem:
         raise HTTPException(*problem)
+    return result
+
+
+def register(payload: dict) -> dict:
+    """Sign up (or sign in by email) without an email code. Returns {token, user, new}."""
+    login = payload.get("mode") == "login"
+    email = _email(payload.get("email"), block_disposable=False)
+    details = None if login else _details(payload)
+    with _lock, _db() as c:
+        result = _sign_in(c, email, details)
+    if not result:
+        raise HTTPException(404, NO_ACCOUNT)
+    return result
+
+
+def _sign_in(c, email: str, details: dict | None) -> dict | None:
+    """Save the details (new or updated sign-up) and issue a token; None when there is no such account."""
+    stamp = _now_iso()
+    existing = c.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone()
+    if details:
+        c.execute(
+            "INSERT INTO users (email, first_name, last_name, company, role, created_at, last_login_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(email) DO UPDATE SET first_name = excluded.first_name, "
+            "last_name = excluded.last_name, company = excluded.company, role = excluded.role, "
+            "last_login_at = excluded.last_login_at",
+            (email, details["first_name"], details["last_name"], details["company"], details["role"], stamp, stamp))
+    elif existing:
+        c.execute("UPDATE users SET last_login_at = ? WHERE email = ?", (stamp, email))
+    else:
+        return None
+    user = c.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    token = secrets.token_urlsafe(32)
+    c.execute("INSERT INTO tokens (token_hash, email, created_at) VALUES (?, ?, ?)", (_sha(token), email, stamp))
     return {"token": token, "user": _user(user), "new": not existing}
 
 

@@ -30,9 +30,10 @@ MAX_QUEUED_JOBS = int(os.getenv("MAX_QUEUED_JOBS", "0"))
 TRUST_PROXY = os.getenv("TRUST_PROXY", "0") == "1"
 JOB_TTL_HOURS = float(os.getenv("JOB_TTL_HOURS", "24"))
 
-# Free sign-up. With SIGNUP_REQUIRED=1 an analysis needs a confirmed email; the 6-digit code goes out over SMTP
-# (without SMTP_HOST it is only written to the engine log, which is enough for local testing).
+# Free sign-up. With SIGNUP_REQUIRED=1 an analysis needs a sign-up. SIGNUP_VERIFY_EMAIL=1 also makes people confirm
+# their email with a 6-digit code sent over SMTP (without SMTP_HOST the code is only written to the engine log).
 SIGNUP_REQUIRED = os.getenv("SIGNUP_REQUIRED", "0") == "1"
+SIGNUP_VERIFY_EMAIL = os.getenv("SIGNUP_VERIFY_EMAIL", "0") == "1"
 RATE_SIGNUP_CODES_PER_HOUR = int(os.getenv("RATE_SIGNUP_CODES_PER_HOUR", "10"))
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))

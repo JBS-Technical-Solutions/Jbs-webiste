@@ -183,7 +183,7 @@ export default function Home({
               </div>
             )}
             {needsSignup ? (
-              <SignupPanel />
+              <SignupPanel verifyEmail={!!health?.signup_verify} />
             ) : (
               <UploadPanel health={health} backendDown={backendDown} submitting={submitting} onStart={onStart} />
             )}

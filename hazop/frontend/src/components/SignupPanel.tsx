@@ -5,7 +5,8 @@ import { ArrowLeft, ArrowRight, LoaderCircle, MailCheck, TriangleAlert, UserPlus
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { notifySignup, saveAccount } from "@/lib/account";
-import { requestSignupCode, verifySignupCode } from "@/lib/api";
+import { registerAccount, requestSignupCode, verifySignupCode } from "@/lib/api";
+import type { Verified } from "@/lib/types";
 import { Button, Card } from "./ui";
 
 const ROLES = [
@@ -69,7 +70,12 @@ function Field({ label, error, children, wide }: { label: string; error?: string
   );
 }
 
-export default function SignupPanel() {
+function signedIn(res: Verified) {
+  saveAccount(res.token, res.user);
+  if (res.new) void notifySignup(res.user);
+}
+
+export default function SignupPanel({ verifyEmail }: { verifyEmail: boolean }) {
   const [mode, setMode] = useState<"signup" | "login">("signup");
   const [step, setStep] = useState<Step>({ kind: "form" });
   const [form, setForm] = useState<Form>({ first_name: "", last_name: "", email: "", company: "", role: "", otherRole: "" });
@@ -114,13 +120,17 @@ export default function SignupPanel() {
         mode === "signup"
           ? { first_name: form.first_name, last_name: form.last_name, email: form.email, company: form.company, role }
           : { email: form.email };
+      if (!verifyEmail) {
+        signedIn(await registerAccount(mode, details));
+        return;
+      }
       const res = await requestSignupCode(mode, details);
       setStep({ kind: "code", email: res.email, isNew: mode === "signup" });
       setCode("");
       setResendIn(res.resend_after);
+      setBusy(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
       setBusy(false);
     }
   };
@@ -131,9 +141,7 @@ export default function SignupPanel() {
     setBusy(true);
     setError(null);
     try {
-      const res = await verifySignupCode(step.email, code);
-      saveAccount(res.token, res.user);
-      if (res.new) void notifySignup(res.user);
+      signedIn(await verifySignupCode(step.email, code));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setCode("");
@@ -166,8 +174,8 @@ export default function SignupPanel() {
                 </h2>
                 <p className="text-xs text-slate-500">
                   {mode === "signup"
-                    ? "Create your free account to analyse P&IDs. We'll email you a code to confirm your address."
-                    : "Enter the email you signed up with and we'll send you a code."}
+                    ? `Create your free account to analyse P&IDs.${verifyEmail ? " We'll email you a code to confirm your address." : ""}`
+                    : `Enter the email you signed up with${verifyEmail ? " and we'll send you a code" : ""}.`}
                 </p>
               </div>
               <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200">
@@ -272,7 +280,17 @@ export default function SignupPanel() {
 
             <Button type="submit" size="lg" className="mt-4 w-full" disabled={busy}>
               {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
-              {busy ? "Sending code…" : mode === "signup" ? "Sign up free" : "Send me a code"}
+              {busy
+                ? verifyEmail
+                  ? "Sending code…"
+                  : mode === "signup"
+                    ? "Signing up…"
+                    : "Signing in…"
+                : mode === "signup"
+                  ? "Sign up free"
+                  : verifyEmail
+                    ? "Send me a code"
+                    : "Sign in"}
             </Button>
             <p className="mt-3 text-center text-xs text-slate-500">
               {mode === "signup" ? "Already signed up? " : "New here? "}

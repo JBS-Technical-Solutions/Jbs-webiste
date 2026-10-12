@@ -18,7 +18,8 @@ from fastapi.responses import FileResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from . import documents, jobs, limits, risk, signup
-from .config import ADMIN_KEY, BACKEND_DIR, CORS_ORIGINS, MAX_UPLOAD_MB, SIGNUP_REQUIRED, available_ai_providers
+from .config import (ADMIN_KEY, BACKEND_DIR, CORS_ORIGINS, MAX_UPLOAD_MB, SIGNUP_REQUIRED, SIGNUP_VERIFY_EMAIL,
+                     available_ai_providers)
 from .exporters import build_docx, build_xlsx
 from .pipeline.render import SUPPORTED
 
@@ -146,12 +147,24 @@ def health():
     return {"status": "ok", "providers": available_ai_providers(), "max_upload_mb": MAX_UPLOAD_MB,
             "formats": sorted(SUPPORTED), "optional_formats": sorted(documents.OPTIONAL_EXT),
             "max_optional_docs": documents.MAX_OPTIONAL_DOCS, "signup_required": SIGNUP_REQUIRED,
-            "samples": [p.name for p in SAMPLES_DIR.glob("*") if p.is_file()]}
+            "signup_verify": SIGNUP_VERIFY_EMAIL, "samples": [p.name for p in SAMPLES_DIR.glob("*") if p.is_file()]}
+
+
+@app.post("/api/signup")
+def signup_direct(request: Request, payload: dict[str, Any] = Body(...)):
+    """Sign up or sign in without an email code. Body: {mode: "signup"|"login", email, first_name, last_name,
+    company, role}. Returns {token, user, new}."""
+    if SIGNUP_VERIFY_EMAIL:
+        raise HTTPException(400, "Confirm your email with the code we send you.")
+    limits.check_rate(request, "signup")
+    return signup.register(payload)
 
 
 @app.post("/api/signup/code")
 async def signup_code(request: Request, payload: dict[str, Any] = Body(...)):
     """Email a 6-digit code. Body: {mode: "signup"|"login", email, first_name, last_name, company, role}."""
+    if not SIGNUP_VERIFY_EMAIL:
+        raise HTTPException(404, "Email codes are switched off.")
     limits.check_rate(request, "signup")
     return await run_in_threadpool(signup.request_code, payload)
 
@@ -159,6 +172,8 @@ async def signup_code(request: Request, payload: dict[str, Any] = Body(...)):
 @app.post("/api/signup/verify")
 def signup_verify(payload: dict[str, Any] = Body(...)):
     """Body: {email, code}. Returns {token, user, new}."""
+    if not SIGNUP_VERIFY_EMAIL:
+        raise HTTPException(404, "Email codes are switched off.")
     return signup.verify_code(payload)
 
 
