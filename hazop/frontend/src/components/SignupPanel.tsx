@@ -9,20 +9,6 @@ import { registerAccount, requestSignupCode, verifySignupCode } from "@/lib/api"
 import type { Verified } from "@/lib/types";
 import { Button, Card } from "./ui";
 
-const ROLES = [
-  "Process Safety Engineer",
-  "Process Engineer",
-  "HAZOP Chair / Facilitator",
-  "Instrumentation & Control Engineer",
-  "Mechanical / Piping Engineer",
-  "Operations / Maintenance",
-  "HSE Manager",
-  "Project / Engineering Manager",
-  "Consultant",
-  "Student / Academic",
-];
-const OTHER_ROLE = "Other";
-
 const EMAIL_RE = /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/;
 const NAME_RE = /^\p{L}[\p{L} .'-]*$/u;
 const DOMAIN_TYPOS: Record<string, string> = {
@@ -44,7 +30,7 @@ const DOMAIN_TYPOS: Record<string, string> = {
 const input =
   "h-10 w-full rounded-lg border bg-white px-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-100";
 
-type Form = { first_name: string; last_name: string; email: string; company: string; role: string; otherRole: string };
+type Form = { first_name: string; last_name: string; email: string; company: string; role: string };
 type Step = { kind: "form" } | { kind: "code"; email: string; isNew: boolean };
 
 function emailProblem(email: string) {
@@ -78,7 +64,7 @@ function signedIn(res: Verified) {
 export default function SignupPanel({ verifyEmail }: { verifyEmail: boolean }) {
   const [mode, setMode] = useState<"signup" | "login">("signup");
   const [step, setStep] = useState<Step>({ kind: "form" });
-  const [form, setForm] = useState<Form>({ first_name: "", last_name: "", email: "", company: "", role: "", otherRole: "" });
+  const [form, setForm] = useState<Form>({ first_name: "", last_name: "", email: "", company: "", role: "" });
   const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,7 +78,7 @@ export default function SignupPanel({ verifyEmail }: { verifyEmail: boolean }) {
   }, [resendIn]);
 
   const set = (key: keyof Form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [key]: e.target.value }));
-  const role = form.role === OTHER_ROLE ? form.otherRole.trim() : form.role;
+  const role = form.role.trim();
   const nameError = (v: string, label: string) =>
     !v.trim() ? `Enter your ${label}.` : NAME_RE.test(v.trim()) ? null : "Use letters only.";
   const errors =
@@ -102,7 +88,7 @@ export default function SignupPanel({ verifyEmail }: { verifyEmail: boolean }) {
           last_name: nameError(form.last_name, "last name"),
           email: emailProblem(form.email),
           company: form.company.trim() ? null : "Enter your company name.",
-          role: role ? null : form.role === OTHER_ROLE ? "Enter your role." : "Choose your role.",
+          role: role ? null : "Enter your role.",
         }
       : { email: emailProblem(form.email) };
   const valid = Object.values(errors).every((e) => !e);
@@ -239,34 +225,16 @@ export default function SignupPanel({ verifyEmail }: { verifyEmail: boolean }) {
                       className={clsx(input, show("company") ? "border-rose-300" : "border-slate-200")}
                     />
                   </Field>
-                  <Field label="Your role" error={form.role === OTHER_ROLE ? null : show("role")} wide>
-                    <select
+                  <Field label="Your role" error={show("role")} wide>
+                    <input
                       value={form.role}
                       onChange={set("role")}
-                      className={clsx(input, !form.role && "text-slate-400", show("role") && form.role !== OTHER_ROLE ? "border-rose-300" : "border-slate-200")}
-                    >
-                      <option value="" disabled>
-                        Choose your role
-                      </option>
-                      {[...ROLES, OTHER_ROLE].map((r) => (
-                        <option key={r} value={r} className="text-slate-800">
-                          {r}
-                        </option>
-                      ))}
-                    </select>
+                      autoComplete="organization-title"
+                      maxLength={80}
+                      placeholder="e.g. Process Safety Engineer"
+                      className={clsx(input, show("role") ? "border-rose-300" : "border-slate-200")}
+                    />
                   </Field>
-                  {form.role === OTHER_ROLE && (
-                    <Field label="Describe your role" error={show("role")} wide>
-                      <input
-                        value={form.otherRole}
-                        onChange={set("otherRole")}
-                        autoComplete="organization-title"
-                        maxLength={80}
-                        autoFocus
-                        className={clsx(input, show("role") ? "border-rose-300" : "border-slate-200")}
-                      />
-                    </Field>
-                  )}
                 </>
               )}
             </div>
