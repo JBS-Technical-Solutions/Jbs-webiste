@@ -3,7 +3,7 @@
 import clsx from "clsx";
 import { ChevronDown, Funnel, Search, X } from "lucide-react";
 import { Fragment, useMemo } from "react";
-import { bandFor, CC_LABEL, LIKELIHOOD, RISK_BANDS, SEVERITY } from "@/lib/risk";
+import { bandFor, bandsOf, CC_LABEL, useRiskMatrix } from "@/lib/risk";
 import type { HazopNode, RiskCode, Worksheet, WorksheetRow } from "@/lib/types";
 import { RiskBadge } from "./ui";
 
@@ -46,7 +46,8 @@ function focusable(tag: string) {
 }
 
 function LevelSelect({ value, onChange, kind }: { value: number; onChange: (v: number) => void; kind: "C" | "L" }) {
-  const items = kind === "C" ? SEVERITY : LIKELIHOOD;
+  const matrix = useRiskMatrix();
+  const items = kind === "C" ? matrix.severity : matrix.likelihood;
   return (
     <label
       title={`${kind === "C" ? "Consequence" : "Likelihood"}: ${items[value - 1]?.name} (click to change)`}
@@ -85,6 +86,7 @@ export default function WorksheetView({
   onTag: (tag: string) => void;
   onRec: (id: string) => void;
 }) {
+  const matrix = useRiskMatrix();
   // First place each recommendation appears (worksheet order); later rows say "refer above".
   const firstRec = useMemo(() => {
     const m = new Map<string, string>();
@@ -142,7 +144,7 @@ export default function WorksheetView({
               All nodes
             </button>
             {ws.nodes.map((n, i) => {
-              const b = bandFor(maxRisk(n));
+              const b = bandFor(maxRisk(n), matrix);
               return (
                 <button
                   key={n.id}
@@ -182,7 +184,7 @@ export default function WorksheetView({
             </div>
             <div className="flex items-center gap-1 rounded-lg bg-slate-50 p-0.5 ring-1 ring-slate-200">
               <Funnel className="mx-1 h-3.5 w-3.5 text-slate-400" />
-              {RISK_BANDS.map((b) => {
+              {bandsOf(matrix).map((b) => {
                 const on = filter.risk.includes(b.code);
                 return (
                   <button

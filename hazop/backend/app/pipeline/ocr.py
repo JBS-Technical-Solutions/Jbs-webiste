@@ -4,10 +4,11 @@ import hashlib
 import json
 import re
 import threading
+import unicodedata
 
 import numpy as np
 
-from ..config import CACHE_DIR
+from ..config import CACHE_DIR, OCR_MODELS_DIR
 
 TILE = 1400
 OVERLAP = 220
@@ -17,16 +18,46 @@ TAG_LIKE = re.compile(r'[A-Z]{1,3}-\d|\d"|-[A-Z]{1,2}\d?-|^[A-Z]{1,3}-?\d{2,3}N$
 
 _engine = None
 _engine_lock = threading.Lock()
+_call_lock = threading.Lock()
 
 
 def _ocr_engine():
     global _engine
     with _engine_lock:
         if _engine is None:
-            from rapidocr_onnxruntime import RapidOCR
+            from rapidocr import ModelType, OCRVersion, RapidOCR
 
-            _engine = RapidOCR()
+            # The parser is tuned to the PP-OCRv4 models; rapidocr's newer default models misread P&ID symbols.
+            v4 = {"ocr_version": OCRVersion.PPOCRV4, "model_type": ModelType.MOBILE}
+            models = {
+                "Det": "ch_PP-OCRv4_det_infer.onnx",
+                "Cls": "ch_ppocr_mobile_v2.0_cls_infer.onnx",
+                "Rec": "ch_PP-OCRv4_rec_infer.onnx",
+            }
+            params = {"Global.log_level": "warning", "Global.use_vertical_padding": False}
+            for stage, model in models.items():
+                params[f"{stage}.model_path"] = str(OCR_MODELS_DIR / model)
+                params.update({f"{stage}.{k}": v for k, v in v4.items()})
+            _engine = RapidOCR(params=params)
     return _engine
+
+
+# RapidOCR keeps use_det/use_cls/use_rec from the previous call, so every call passes all three, and calls from
+# different threads (analysis jobs, document checks) are serialised.
+def _read_full(engine, img):
+    with _call_lock:
+        res = engine(img, use_det=True, use_cls=True, use_rec=True, return_word_box=False)
+    if res.boxes is None or res.txts is None:
+        return []
+    return list(zip(res.boxes.tolist(), res.txts, res.scores))
+
+
+def _read_line(engine, img):
+    with _call_lock:
+        res = engine(img, use_det=False, use_cls=False, use_rec=True, return_word_box=False)
+    if not res.txts:
+        return None
+    return res.txts[0], res.scores[0]
 
 
 def _tiles(h, w):
@@ -50,8 +81,7 @@ def _detect(img, progress):
     tiles = _active_tiles(img)
     out = []
     for i, (x, y) in enumerate(tiles):
-        result, _ = engine(_rgb(img[y:y + TILE, x:x + TILE]))
-        for box, text, score in result or []:
+        for box, text, score in _read_full(engine, _rgb(img[y:y + TILE, x:x + TILE])):
             score = float(score)
             if score < MIN_SCORE or not text.strip():
                 continue
@@ -85,9 +115,9 @@ def _reread_vertical(img, tokens, progress):
         crop = img[max(0, y0 - pad):min(H, y1 + pad), max(0, x0 - pad):min(W, x1 + pad)]
         best = (t["text"], t["score"], _rank(t["text"], t["score"]))
         for k in (-1, 1):
-            res, _ = engine(_rgb(np.rot90(crop, k=k)), use_det=False, use_cls=False, use_rec=True)
+            res = _read_line(engine, _rgb(np.rot90(crop, k=k)))
             if res:
-                text, score = res[0][0].strip(), float(res[0][1])
+                text, score = res[0].strip(), float(res[1])
                 r = _rank(text, score)
                 if text and r > best[2]:
                     best = (text, score, r)
@@ -118,6 +148,43 @@ def _dedupe(tokens):
             continue
         kept.append(t)
     return kept
+
+
+def _join_words(parts):
+    """Words from one detected line, with a space only where there is a visible gap between them."""
+    text, prev_end = "", None
+    for word, _, box in parts:
+        if not word.strip():
+            continue
+        xs, ys = [p[0] for p in box], [p[1] for p in box]
+        if prev_end is not None and min(xs) - prev_end > 0.32 * (max(ys) - min(ys)):
+            text += " "
+        text += word.strip()
+        prev_end = max(xs)
+    return text
+
+
+def read_document(rgb):
+    """One pass over an upright document page (a table, not a drawing): [{text, score, box}].
+
+    The recogniser often drops spaces in English text; its word boxes are used to put them back. The orientation
+    classifier is off: it flips some lines of dense tables upside down."""
+    engine = _ocr_engine()
+    with _call_lock:
+        res = engine(np.ascontiguousarray(rgb), use_det=True, use_cls=False, use_rec=True, return_word_box=True)
+    if res.boxes is None or res.txts is None:
+        return []
+    words = res.word_results or [None] * len(res.txts)
+    out = []
+    for box, text, score, parts in zip(res.boxes.tolist(), res.txts, res.scores, words):
+        if parts:
+            text = _join_words(parts)
+        text = unicodedata.normalize("NFKC", text)
+        if float(score) < MIN_SCORE or not text.strip():
+            continue
+        xs, ys = [p[0] for p in box], [p[1] for p in box]
+        out.append({"text": text.strip(), "score": round(float(score), 3), "box": [min(xs), min(ys), max(xs), max(ys)]})
+    return out
 
 
 def extract_text(page, progress=None, use_cache=True):

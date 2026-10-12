@@ -12,6 +12,7 @@ import time
 import httpx
 
 from .. import knowledge as kb
+from .. import risk
 from ..config import AI_PROVIDERS
 from ..risk import evaluate
 
@@ -29,7 +30,9 @@ Rules:
   High/Low Temperature, High/Low Level, Composition/Contamination, Utility Failure, Maintenance/Start-up).
 - Each row: one credible cause, numbered consequences (escalation to the worst credible outcome without safeguards),
   CC (S = Safety, E = Environment, A = Asset), safeguards actually shown on the P&ID with their tags, and C and L
-  (integers 1-5, ranked with safeguards in place) using the 5x5 matrix.
+  (integers, ranked with safeguards in place) using the project risk matrix given in the input (its consequence and
+  likelihood levels and the ranking of each cell).
+- Additional project documents (e.g. PFD) may be attached; use them for context, but tags must still come from the P&ID.
 - Recommendations must be specific and actionable; reuse the same recommendation id when the same action applies.
 - Respect piping spec ratings, design pressures/temperatures and sour service when judging consequences.
 - Output ONLY JSON, no markdown, matching exactly this schema:
@@ -60,15 +63,30 @@ def _entities_summary(ext):
     }
 
 
-def _prompt(ext, draft):
-    specs = {code: {k: v for k, v in s.items() if k != "pressure_temp"} for code, s in kb.piping()["specs"].items()}
+FIXED_NODES = ("The nodes in the draft worksheet were defined by the user. Keep exactly these nodes, in this order, "
+               "with their titles and boundaries; do not add, merge or remove nodes.")
+
+
+def _prompt(ext, draft, texts, fixed_nodes):
+    specs = {code: {k: v for k, v in s.items() if k != "pressure_temp"} for code, s in kb.specs().items()}
+    m = risk.current()
+    nc, nl = risk.size(m)
     payload = {
         "extracted_entities": _entities_summary(ext),
         "piping_specs": specs,
+        "risk_matrix": {
+            "consequence_levels": m["severity"], "likelihood_levels": m["likelihood"],
+            "rankings": {b["code"]: b["name"] for b in m["bands"]},
+            "cells": {f"C{c}": {f"L{l}": m["cells"][c - 1][l - 1] for l in range(1, nl + 1)} for c in range(1, nc + 1)},
+        },
         "draft_worksheet": {k: draft[k] for k in ("nodes", "recommendations", "assumptions")},
     }
-    return ("Review the attached P&ID and produce the final HAZOP worksheet JSON.\n\n"
-            + json.dumps(payload, ensure_ascii=False, default=str))
+    if texts:
+        payload["project_documents"] = texts
+    head = (f"Review the attached P&ID and produce the final HAZOP worksheet JSON. C must be 1-{nc} and L must be 1-{nl}.")
+    if fixed_nodes:
+        head += " " + FIXED_NODES
+    return head + "\n\n" + json.dumps(payload, ensure_ascii=False, default=str)
 
 
 def _parse_json(text):
@@ -85,7 +103,11 @@ def _parse_json(text):
         raise AIError(f"The AI response was not valid JSON: {e}") from e
 
 
-def _call_openai(cfg, image_b64, prompt):
+def _call_openai(cfg, images, prompt):
+    content = [{"type": "text", "text": prompt}]
+    for label, b64 in images:
+        content += [{"type": "text", "text": label},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "high"}}]
     r = httpx.post(
         "https://api.openai.com/v1/chat/completions",
         headers={"Authorization": f"Bearer {cfg['key']}"},
@@ -94,10 +116,7 @@ def _call_openai(cfg, image_b64, prompt):
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": SYSTEM},
-                {"role": "user", "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}", "detail": "high"}},
-                ]},
+                {"role": "user", "content": content},
             ],
         },
         timeout=TIMEOUT,
@@ -107,7 +126,11 @@ def _call_openai(cfg, image_b64, prompt):
     return r.json()["choices"][0]["message"]["content"]
 
 
-def _call_anthropic(cfg, image_b64, prompt):
+def _call_anthropic(cfg, images, prompt):
+    content = []
+    for label, b64 in images:
+        content += [{"type": "text", "text": label},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}}]
     r = httpx.post(
         "https://api.anthropic.com/v1/messages",
         headers={"x-api-key": cfg["key"], "anthropic-version": "2023-06-01"},
@@ -115,10 +138,7 @@ def _call_anthropic(cfg, image_b64, prompt):
             "model": cfg["model"],
             "max_tokens": 16000,
             "system": SYSTEM,
-            "messages": [{"role": "user", "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_b64}},
-                {"type": "text", "text": prompt},
-            ]}],
+            "messages": [{"role": "user", "content": content + [{"type": "text", "text": prompt}]}],
         },
         timeout=TIMEOUT,
     )
@@ -127,7 +147,10 @@ def _call_anthropic(cfg, image_b64, prompt):
     return "".join(b.get("text", "") for b in r.json()["content"])
 
 
-def _call_gemini(cfg, image_b64, prompt):
+def _call_gemini(cfg, images, prompt):
+    inputs = []
+    for label, b64 in images:
+        inputs += [{"text": label}, {"inline_data": {"mime_type": "image/png", "data": b64}}]
     models = [cfg["model"], *cfg.get("fallbacks", []), cfg["model"]]
     for attempt, model in enumerate(models):
         if attempt:
@@ -137,10 +160,7 @@ def _call_gemini(cfg, image_b64, prompt):
             headers={"x-goog-api-key": cfg["key"]},
             json={
                 "systemInstruction": {"parts": [{"text": SYSTEM}]},
-                "contents": [{"role": "user", "parts": [
-                    {"inline_data": {"mime_type": "image/png", "data": image_b64}},
-                    {"text": prompt},
-                ]}],
+                "contents": [{"role": "user", "parts": inputs + [{"text": prompt}]}],
                 "generationConfig": {"responseMimeType": "application/json"},
             },
             timeout=TIMEOUT,
@@ -156,11 +176,11 @@ def _call_gemini(cfg, image_b64, prompt):
 CALLERS = {"openai": _call_openai, "anthropic": _call_anthropic, "gemini": _call_gemini}
 
 
-def _clamp(v, default):
+def _clamp(v, default, top):
     try:
-        return max(1, min(5, int(v)))
+        return max(1, min(top, int(v)))
     except (TypeError, ValueError):
-        return default
+        return min(default, top)
 
 
 def _as_list(v):
@@ -174,6 +194,7 @@ def _as_list(v):
 def normalise(data, draft):
     """Coerce an AI answer into the worksheet schema; recompute risk; renumber deviations."""
     recs = {str(k): str(v) for k, v in (data.get("recommendations") or {}).items()}
+    nc, nl = risk.size()
     nodes = []
     for n_idx, node in enumerate(data.get("nodes") or [], 1):
         devs = []
@@ -182,7 +203,7 @@ def normalise(data, draft):
             for r in d.get("rows") or []:
                 if not r.get("cause"):
                     continue
-                c, l = _clamp(r.get("c"), 3), _clamp(r.get("l"), 2)
+                c, l = _clamp(r.get("c"), 3, nc), _clamp(r.get("l"), 2, nl)
                 rows.append({
                     "cause": str(r["cause"]),
                     "consequences": _as_list(r.get("consequences")),
@@ -209,12 +230,16 @@ def normalise(data, draft):
     return {"study": draft["study"], "nodes": nodes, "recommendations": recs, "assumptions": assumptions}
 
 
-def review(provider, png_bytes, ext, draft):
+def review(provider, png_bytes, ext, draft, attachments=(), fixed_nodes=False):
+    """attachments: optional project documents as {"name", "png"} (rendered page) or {"name", "text"}."""
     cfg = AI_PROVIDERS.get(provider)
     if not cfg or not cfg["key"]:
         raise AIError(f"AI provider '{provider}' is not configured. Add its API key to backend/.env.")
-    image_b64 = base64.b64encode(png_bytes).decode()
-    text = CALLERS[provider](cfg, image_b64, _prompt(ext, draft))
+    images = [("P&ID under review:", base64.b64encode(png_bytes).decode())]
+    images += [(f"Project document {a['name']} (reference only):", base64.b64encode(a["png"]).decode())
+               for a in attachments if a.get("png")][:3]
+    texts = [{"name": a["name"], "text": a["text"]} for a in attachments if a.get("text")]
+    text = CALLERS[provider](cfg, images, _prompt(ext, draft, texts, fixed_nodes))
     result = normalise(_parse_json(text), draft)
     result["study"] = dict(result["study"], analysis=f"AI-assisted ({cfg['label']} {cfg['model']})")
     return result

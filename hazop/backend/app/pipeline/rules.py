@@ -9,6 +9,7 @@ actually found on the drawing and design limits come from the piping-spec knowle
 from collections import Counter
 
 from .. import knowledge as kb
+from .. import risk
 from ..risk import evaluate
 
 DEG = "\u00b0F"
@@ -183,8 +184,9 @@ def shutdown_alarms(ctx):
 # -------------------------------------------------------------------- row helper
 
 def row(cause, consequences, cc, safeguards, c, base_l, recs=()):
+    """C and L are given on a 5-level basis and mapped onto the active project risk matrix."""
     strong = any(s["strong"] for s in safeguards)
-    l = max(1, base_l - (1 if strong else 0))
+    c, l = risk.from_basis(c, max(1, base_l - (1 if strong else 0)))
     safeguards = safeguards[:5]
     return {
         "cause": cause,
@@ -634,32 +636,94 @@ def relief_node(ctx, nid, protected):
     }
 
 
-def pipeline_node(ctx, nid):
-    """Fallback when no equipment is recognised: treat the main process line as the node."""
-    main = ctx.proc_spec or (ctx.lines[0] if ctx.lines else None)
-    fake = {"tag": main["tag"] if main else "process line", "kind": "equipment", "description": "process piping",
-            "design": {}, "electric": False}
-    node = equipment_node(ctx, fake, nid)
-    node["title"] = f"Process line {fake['tag']}"
+# ------------------------------------------------------------------ node planning
+
+def _main_equipment(ext):
+    return [e for e in ext["equipment"] if not e["offpage"] and e["kind"] not in ("panel", "package")]
+
+
+def _auto_plan(ctx, ext):
+    """Default nodes: each major equipment item, the control valve / letdown, and relief to flare."""
+    plan = [[e["tag"]] for e in _main_equipment(ext)]
+    cvs = ctx.find(cats=("control_valve",))
+    if cvs:
+        plan.append([cvs[0]["tag"]])
+    if ctx.find(cats=("relief",)) or ctx.flare_lines:
+        plan.append([p["tag"] for p in ctx.find(cats=("relief",))] + [l["tag"] for l in ctx.flare_lines])
+    if not plan and ctx.lines:
+        main = ctx.proc_spec or ctx.lines[0]
+        plan.append([main["tag"]])
+    return [{"title": "", "tags": tags, "design_intent": ""} for tags in plan]
+
+
+def _merge(parts):
+    """Combine the nodes built for each anchor of a user node; same-named deviations share one entry."""
+    if len(parts) == 1:
+        return parts[0]
+    devs = {}
+    for p in parts:
+        for d in p["deviations"]:
+            devs.setdefault(d["deviation"], []).extend(d["rows"])
+    join = lambda key, sep: sep.join(dict.fromkeys(p[key] for p in parts if p[key] and p[key] != "Not shown on the P&ID."))
+    return {
+        "id": parts[0]["id"],
+        "title": " / ".join(p["title"] for p in parts),
+        "boundary": join("boundary", " "),
+        "design_intent": join("design_intent", " "),
+        "design_conditions": join("design_conditions", "; ") or "Not shown on the P&ID.",
+        "deviations": [{"deviation": name, "rows": rows} for name, rows in devs.items()],
+    }
+
+
+def _build(ctx, ext, entry, nid):
+    tags = {t.strip().upper() for t in entry.get("tags") or [] if t and t.strip()}
+    main_eq = _main_equipment(ext)
+    heater = next((e for e in main_eq if e["kind"] in ("heater", "exchanger")), None)
+    eqs = [e for e in ext["equipment"] if e["tag"].upper() in tags and e["kind"] not in ("panel", "package")]
+    cvs = [i for i in ctx.find(cats=("control_valve",)) if i["tag"].upper() in tags]
+    relief = any(i["tag"].upper() in tags for i in ctx.find(cats=("relief",))) or \
+        any(l["tag"].upper() in tags for l in ctx.flare_lines)
+    lines = [l for l in ctx.process_lines if l["tag"].upper() in tags]
+
+    parts = [equipment_node(ctx, e, nid) for e in eqs]
+    parts += [control_valve_node(ctx, [cv], nid, heater) for cv in cvs]
+    if relief:
+        protected = eqs[0]["tag"] if eqs else (main_eq[0]["tag"] if main_eq else None)
+        parts.append(relief_node(ctx, nid, protected))
+    if not parts:
+        anchor = lines[0]["tag"] if lines else (entry.get("title") or next(iter(sorted(tags)), f"Node {nid}"))
+        fake = {"tag": anchor, "kind": "equipment", "description": "process piping" if lines else "",
+                "design": {}, "electric": False}
+        node = equipment_node(ctx, fake, nid)
+        node["title"] = f"Process line {anchor}" if lines else anchor
+        parts.append(node)
+
+    node = _merge(parts)
+    if (entry.get("title") or "").strip():
+        node["title"] = entry["title"].strip()
+    if (entry.get("design_intent") or "").strip():
+        node["design_intent"] = entry["design_intent"].strip()
     return node
+
+
+def plan_nodes(ext):
+    """Proposed nodes for the user to review: title, the tags that anchor each node and its generated intent."""
+    ctx = Ctx(ext)
+    out = []
+    for i, entry in enumerate(_auto_plan(ctx, ext), 1):
+        node = _build(ctx, ext, entry, i)
+        out.append({"title": node["title"], "tags": entry["tags"], "design_intent": "",
+                    "auto_intent": node["design_intent"]})
+    return out
 
 
 # ------------------------------------------------------------------------ main
 
-def generate(ext, study=None):
+def generate(ext, study=None, user_nodes=None):
     ctx = Ctx(ext)
-    nodes = []
-    main_eq = [e for e in ext["equipment"] if not e["offpage"] and e["kind"] not in ("panel", "package")]
-    for e in main_eq:
-        nodes.append(equipment_node(ctx, e, len(nodes) + 1))
-    heater = next((e for e in main_eq if e["kind"] in ("heater", "exchanger")), None)
-    cvs = ctx.find(cats=("control_valve",))
-    if cvs:
-        nodes.append(control_valve_node(ctx, cvs, len(nodes) + 1, heater))
-    if ctx.find(cats=("relief",)) or ctx.flare_lines:
-        nodes.append(relief_node(ctx, len(nodes) + 1, main_eq[0]["tag"] if main_eq else None))
-    if not nodes and ctx.lines:
-        nodes.append(pipeline_node(ctx, 1))
+    main_eq = _main_equipment(ext)
+    plan = user_nodes if user_nodes else _auto_plan(ctx, ext)
+    nodes = [_build(ctx, ext, entry, i) for i, entry in enumerate(plan, 1)]
 
     for n in nodes:
         for i, d in enumerate(n["deviations"], 1):
@@ -670,11 +734,21 @@ def generate(ext, study=None):
         f"{package['tag']} {package['description']}".strip() if package else "",
         f"{main_eq[0]['tag']} {main_eq[0]['description']}".strip() if main_eq else ""] if x)
 
+    matrix = risk.current()
+    nc, nl = risk.size(matrix)
+    if matrix.get("source"):
+        ranking = f"C and L are ranked with existing safeguards in place using the project risk matrix ({nc} x {nl}, {matrix['source']})."
+        if (nc, nl) != (5, 5):
+            ranking += " Rule-engine rankings are mapped onto this matrix from a 5-level basis and should be confirmed by the team."
+    else:
+        ranking = "C and L are ranked with existing safeguards in place using the generic 5 x 5 risk matrix."
     assumptions = [
         "Worksheet generated automatically by the rule-based engine from text recognised on the P&ID; review by a HAZOP team is required.",
-        "C and L are ranked with existing safeguards in place using the generic 5 x 5 risk matrix.",
+        ranking,
         "CC (Consequence Category): S = Safety / People, E = Environment, A = Asset / Production.",
     ]
+    if user_nodes:
+        assumptions.append("HAZOP nodes and their boundaries were defined by the user before the worksheet was generated.")
     offpage = [e["tag"] for e in ext["equipment"] if e["offpage"]]
     if offpage:
         assumptions.append(f"Design data for off-page equipment ({', '.join(offpage)}) is not shown on this drawing.")

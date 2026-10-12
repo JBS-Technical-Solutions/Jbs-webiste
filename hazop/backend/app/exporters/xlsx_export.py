@@ -6,7 +6,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from ..risk import LIKELIHOOD, RISK_BANDS, SEVERITY, evaluate
+from .. import risk
+from ..risk import evaluate
 
 HEADER_FILL = PatternFill("solid", fgColor="C0E0FF")
 NODE_FILL = PatternFill("solid", fgColor="1E3A5F")
@@ -47,7 +48,7 @@ def _worksheet(wb, result):
 
     ws.cell(row=1, column=1, value=study.get("title") or "HAZOP Worksheets").font = Font(name="Arial", bold=True, size=16)
     r = 2
-    for label, key in (("Project", "project"), ("Facility", "facility"), ("Client", "client"), ("Drawing", "drawing"),
+    for label, key in (("Project", "project"), ("Facility", "facility"), ("Company", "client"), ("Drawing", "drawing"),
                        ("Revision", "revision"), ("Study date", "date"), ("HAZOP team", "team")):
         if study.get(key):
             ws.cell(row=r, column=1, value=label).font = Font(name="Arial", bold=True, size=10)
@@ -86,7 +87,7 @@ def _worksheet(wb, result):
         for dev in node["deviations"]:
             start = r
             for i, row in enumerate(dev["rows"]):
-                risk = evaluate(row["c"], row["l"])
+                row_risk = evaluate(row["c"], row["l"])
                 rec_lines = []
                 for rid in row.get("recommendations", []):
                     rec_lines.append(f"{rid}: Refer above." if rid in seen else f"{rid}: {recs.get(rid, '')}")
@@ -94,13 +95,13 @@ def _worksheet(wb, result):
                 values = [dev["deviation"] if i == 0 else None, f"{i + 1}. {row['cause']}",
                           _numbered(row.get("consequences", [])), row.get("cc", ""),
                           _numbered(row.get("safeguards", [])), "\n".join(row.get("tags", [])),
-                          int(row["c"]), int(row["l"]), f"{risk['score']} {risk['code']}", "\n".join(rec_lines)]
+                          int(row["c"]), int(row["l"]), f"{row_risk['score']} {row_risk['code']}", "\n".join(rec_lines)]
                 for j, v in enumerate(values, 1):
                     c = ws.cell(row=r, column=j, value=v)
                     c.font = Font(name="Arial", size=9, bold=(j in (1, 9)))
                     c.alignment = CENTER if j in (4, 7, 8, 9) else WRAP
                     c.border = BORDER
-                ws.cell(row=r, column=9).fill = _fill(risk["color"])
+                ws.cell(row=r, column=9).fill = _fill(row_risk["color"])
                 longest = max(len(str(v or "")) / max(w * 1.1, 1) for v, (_, w) in zip(values, WORKSHEET_COLS))
                 lines = max(len(str(values[j] or "").split("\n")) for j in range(ncol))
                 ws.row_dimensions[r].height = min(400, 13 * max(lines, int(longest) + 1, 2))
@@ -126,53 +127,67 @@ def _recommendations(wb, result):
         for dev in node["deviations"]:
             for row in dev["rows"]:
                 for rid in row.get("recommendations", []):
-                    info = refs.setdefault(rid, {"refs": [], "score": 0})
+                    info = refs.setdefault(rid, {"refs": [], "worst": None})
                     info["refs"].append(dev["deviation"].split(" ")[0])
-                    info["score"] = max(info["score"], int(row["c"]) * int(row["l"]))
+                    info["worst"] = risk.worse(info["worst"], evaluate(row["c"], row["l"]))
     for i, (rid, text) in enumerate(result.get("recommendations", {}).items(), 2):
-        info = refs.get(rid, {"refs": [], "score": 0})
-        band = next((b for b in RISK_BANDS if info["score"] and info["score"] <= b["max"]), None)
+        info = refs.get(rid, {"refs": [], "worst": None})
+        worst = info["worst"]
         vals = [rid, text, ", ".join(dict.fromkeys(info["refs"])),
-                f"{info['score']} ({band['name']})" if band else "-", "", "Open"]
+                f"{worst['score']} ({worst['name']})" if worst else "-", "", "Open"]
         for j, v in enumerate(vals, 1):
             c = ws.cell(row=i, column=j, value=v)
             c.font = Font(name="Arial", size=9, bold=(j == 1))
             c.alignment = WRAP
             c.border = BORDER
-        if band:
-            ws.cell(row=i, column=4).fill = _fill(band["color"])
+        if worst:
+            ws.cell(row=i, column=4).fill = _fill(worst["color"])
         ws.row_dimensions[i].height = 13 * (len(text) // 95 + 1)
     ws.freeze_panes = "A2"
 
 
 def _matrix(wb):
+    m = risk.current()
+    severity, likelihood = m["severity"], m["likelihood"]
+    last = max(len(likelihood) + 1, 6)
     ws = wb.create_sheet("Risk Matrix")
     ws.column_dimensions["A"].width = 26
-    for j in range(2, 7):
+    for j in range(2, len(likelihood) + 2):
         ws.column_dimensions[get_column_letter(j)].width = 16
-    _header(ws, 1, ["Consequence \\ Likelihood"] + [f"L{l['level']} - {l['name']}" for l in LIKELIHOOD])
-    for i, sev in enumerate(reversed(SEVERITY), 2):
+    title = ws.cell(row=1, column=1, value=f"{m['name']}" + (f" ({m['source']})" if m.get("source") else ""))
+    title.font = Font(name="Arial", bold=True, size=11)
+    _header(ws, 2, ["Consequence \\ Likelihood"] + [f"L{l['level']} - {l['name']}" for l in likelihood])
+    for i, sev in enumerate(reversed(severity), 3):
         a = ws.cell(row=i, column=1, value=f"C{sev['level']} - {sev['name']}")
         a.font = Font(name="Arial", bold=True, size=10)
         a.border = BORDER
-        for j, lk in enumerate(LIKELIHOOD, 2):
-            risk = evaluate(sev["level"], lk["level"])
-            c = ws.cell(row=i, column=j, value=f"{risk['score']} ({risk['code']})")
-            c.fill = _fill(risk["color"])
+        for j, lk in enumerate(likelihood, 2):
+            cell_risk = evaluate(sev["level"], lk["level"])
+            c = ws.cell(row=i, column=j, value=f"{cell_risk['score']} ({cell_risk['code']})")
+            c.fill = _fill(cell_risk["color"])
             c.alignment = CENTER
             c.border = BORDER
             c.font = Font(name="Arial", bold=True, size=10)
         ws.row_dimensions[i].height = 26
-    r = 9
-    for title, items in (("Consequence", SEVERITY), ("Likelihood", LIKELIHOOD)):
-        _header(ws, r, ["Level", title, "Description"])
-        ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=6)
+    r = len(severity) + 4
+    _header(ws, r, ["Risk", "Ranking"])
+    for k, band in enumerate(m["bands"], 1):
+        a = ws.cell(row=r + k, column=1, value=band["code"])
+        a.fill = _fill(band["color"])
+        a.font = Font(name="Arial", bold=True, size=9)
+        b = ws.cell(row=r + k, column=2, value=band["name"])
+        b.font = Font(name="Arial", size=9)
+        a.border = b.border = BORDER
+    r += len(m["bands"]) + 2
+    for heading, items in (("Consequence", severity), ("Likelihood", likelihood)):
+        _header(ws, r, ["Level", heading, "Description"])
+        ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=last)
         for k, it in enumerate(items, 1):
             for j, v in enumerate([it["level"], it["name"], it["desc"]], 1):
                 c = ws.cell(row=r + k, column=j, value=v)
                 c.font = Font(name="Arial", size=9)
                 c.border = BORDER
-            ws.merge_cells(start_row=r + k, start_column=3, end_row=r + k, end_column=6)
+            ws.merge_cells(start_row=r + k, start_column=3, end_row=r + k, end_column=last)
         r += len(items) + 2
 
 

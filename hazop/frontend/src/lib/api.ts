@@ -1,4 +1,4 @@
-import type { Extraction, Health, Job, StudyInfo, Worksheet } from "./types";
+import type { DocumentCheck, DocumentKind, Extraction, Health, Job, NodeMode, NodePlan, StudyInfo, Worksheet } from "./types";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "/hazop").replace(/\/$/, "");
 
@@ -23,35 +23,54 @@ export async function getHealth(): Promise<Health> {
 export interface JobOptions {
   mode: "rules" | "ai";
   provider?: string;
+  nodeMode: NodeMode;
   study: StudyInfo;
 }
 
-function optionsForm(opts: JobOptions, form = new FormData()) {
-  form.set("mode", opts.mode);
-  form.set("provider", opts.provider ?? "");
-  form.set("study", JSON.stringify(opts.study));
-  return form;
+export interface ProjectDocuments {
+  pipingSpec: File;
+  riskMatrix: File;
+  optional: File[];
 }
 
-export async function createJob(file: File, opts: JobOptions): Promise<Job> {
-  const form = optionsForm(opts);
+export async function createJob(file: File, docs: ProjectDocuments, opts: JobOptions): Promise<Job> {
+  const form = new FormData();
+  form.set("mode", opts.mode);
+  form.set("provider", opts.provider ?? "");
+  form.set("node_mode", opts.nodeMode);
+  form.set("study", JSON.stringify(opts.study));
   form.set("file", file);
+  form.set("piping_spec", docs.pipingSpec);
+  form.set("risk_matrix", docs.riskMatrix);
+  docs.optional.forEach((f) => form.append("optional_docs", f));
   return handle(await fetch(`${API_URL}/api/jobs`, { method: "POST", body: form }));
 }
 
-export async function createSampleJob(opts: JobOptions): Promise<Job> {
-  return handle(await fetch(`${API_URL}/api/jobs/sample`, { method: "POST", body: optionsForm(opts) }));
+export async function checkDocument(kind: DocumentKind, file: File): Promise<DocumentCheck> {
+  const form = new FormData();
+  form.set("file", file);
+  return handle(await fetch(`${API_URL}/api/documents/${kind}`, { method: "POST", body: form }));
 }
 
 export async function getJob(id: string): Promise<Job> {
   return handle(await fetch(`${API_URL}/api/jobs/${id}`, { cache: "no-store" }));
 }
 
+export async function submitNodes(id: string, nodes: NodePlan[]): Promise<Job> {
+  return handle(
+    await fetch(`${API_URL}/api/jobs/${id}/nodes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nodes: nodes.map(({ title, tags, design_intent }) => ({ title, tags, design_intent })) }),
+    }),
+  );
+}
+
 export function imageUrl(path: string) {
   return `${API_URL}${path}`;
 }
 
-export type ExportFormat = "docx" | "xlsx" | "json";
+export type ExportFormat = "docx" | "xlsx";
 
 export async function downloadExport(fmt: ExportFormat, worksheet: Worksheet, extraction?: Extraction) {
   const res = await fetch(`${API_URL}/api/export/${fmt}`, {

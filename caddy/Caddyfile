@@ -17,7 +17,7 @@
 	@hazop path /hazop /hazop/*
 	handle @hazop {
 		request_body {
-			max_size 30MB
+			max_size 100MB
 		}
 		reverse_proxy hazop-web:3000
 	}

@@ -47,6 +47,13 @@ services:
     build: ./hazop/backend
     environment:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      TRUST_PROXY: "1"
+      RATE_JOBS_PER_HOUR: ${HAZOP_RATE_JOBS_PER_HOUR:-10}
+      RATE_DOCS_PER_HOUR: ${HAZOP_RATE_DOCS_PER_HOUR:-40}
+      RATE_EXPORTS_PER_HOUR: ${HAZOP_RATE_EXPORTS_PER_HOUR:-60}
+      AI_JOBS_PER_DAY: ${HAZOP_AI_JOBS_PER_DAY:-50}
+      MAX_QUEUED_JOBS: ${HAZOP_MAX_QUEUED_JOBS:-6}
+      JOB_TTL_HOURS: ${HAZOP_JOB_TTL_HOURS:-24}
     volumes:
       - hazop_data:/app/data
     restart: unless-stopped

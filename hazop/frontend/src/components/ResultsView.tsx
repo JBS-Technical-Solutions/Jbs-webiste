@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useMemo, useState } from "react";
-import { evaluate, RISK_BANDS } from "@/lib/risk";
+import { bandsOf, DEFAULT_MATRIX, evaluate, RiskMatrixContext } from "@/lib/risk";
 import type { Job, RiskCode, Worksheet, WorksheetRow } from "@/lib/types";
 import DownloadMenu from "./DownloadMenu";
 import PidViewer from "./PidViewer";
@@ -39,6 +39,8 @@ export default function ResultsView({ job, onNew }: { job: Job; onNew: () => voi
   const [focusTag, setFocusTag] = useState<string | null>(null);
   const [focusRec, setFocusRec] = useState<string | null>(null);
   const [warningsOpen, setWarningsOpen] = useState(true);
+  const matrix = ws.risk_matrix ?? DEFAULT_MATRIX;
+  const bands = bandsOf(matrix);
 
   const rows = useMemo(() => allRows(ws), [ws]);
   const dist = useMemo(() => {
@@ -52,7 +54,7 @@ export default function ResultsView({ job, onNew }: { job: Job; onNew: () => voi
       const next = structuredClone(prev);
       const row = next.nodes[n].deviations[d].rows[r];
       Object.assign(row, patch);
-      row.risk = evaluate(row.c, row.l);
+      row.risk = evaluate(row.c, row.l, next.risk_matrix ?? DEFAULT_MATRIX);
       return next;
     });
     setEdited(true);
@@ -88,6 +90,7 @@ export default function ResultsView({ job, onNew }: { job: Job; onNew: () => voi
   ];
 
   return (
+    <RiskMatrixContext value={matrix}>
     <div className="flex min-h-screen flex-col bg-slate-50">
       {/* Top bar */}
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur-md">
@@ -155,7 +158,7 @@ export default function ResultsView({ job, onNew }: { job: Job; onNew: () => voi
               <Layers className="h-3.5 w-3.5" /> {study.analysis ?? "Rule-based engine"}
               <span className="text-slate-300">&bull;</span>
               <span className="text-slate-500">
-                {result.text_method === "pdf-text" ? "PDF text layer" : "OCR"} &middot;{" "}
+                {result.text_method === "pdf-text" ? "PDF text layer" : "OCR (Optical Character Recognition)"} &middot;{" "}
                 {Object.values(result.timings).reduce((a, b) => a + b, 0).toFixed(1)}s
               </span>
             </div>
@@ -194,7 +197,7 @@ export default function ResultsView({ job, onNew }: { job: Job; onNew: () => voi
           >
             <div className="text-xs font-medium text-slate-500">Risk profile</div>
             <div className="mt-2.5 flex h-3 overflow-hidden rounded-full bg-slate-100">
-              {RISK_BANDS.map((b) =>
+              {bands.map((b) =>
                 dist[b.code] ? (
                   <motion.div
                     key={b.code}
@@ -208,7 +211,7 @@ export default function ResultsView({ job, onNew }: { job: Job; onNew: () => voi
               )}
             </div>
             <div className="mt-2 flex justify-between text-[11px] text-slate-500">
-              {RISK_BANDS.map((b) => (
+              {bands.map((b) => (
                 <button
                   key={b.code}
                   onClick={() => {
@@ -282,5 +285,6 @@ export default function ResultsView({ job, onNew }: { job: Job; onNew: () => voi
         </AnimatePresence>
       </main>
     </div>
+    </RiskMatrixContext>
   );
 }

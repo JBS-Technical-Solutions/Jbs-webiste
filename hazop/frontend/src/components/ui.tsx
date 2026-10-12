@@ -2,7 +2,7 @@
 
 import clsx from "clsx";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
-import { bandFor } from "@/lib/risk";
+import { bandFor, useRiskMatrix } from "@/lib/risk";
 import type { RiskCode } from "@/lib/types";
 
 export function Logo({ className, light = false }: { className?: string; light?: boolean }) {
@@ -65,7 +65,7 @@ export function Card({ className, children }: { className?: string; children: Re
 }
 
 export function RiskBadge({ code, score, size = "md" }: { code: RiskCode; score?: number; size?: "sm" | "md" }) {
-  const b = bandFor(code);
+  const b = bandFor(code, useRiskMatrix());
   return (
     <span
       className={clsx(

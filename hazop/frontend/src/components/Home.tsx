@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Braces,
   FileSpreadsheet,
   FileText,
   Clock,
@@ -15,22 +14,29 @@ import {
   Waypoints,
 } from "lucide-react";
 import { motion } from "motion/react";
-import type { JobOptions } from "@/lib/api";
+import type { JobOptions, ProjectDocuments } from "@/lib/api";
 import type { Health } from "@/lib/types";
 import UploadPanel from "./UploadPanel";
 import { Logo } from "./ui";
 
 const STEPS = [
-  { icon: ScanText, title: "Read the drawing", desc: "PDF text layer or tiled OCR picks up every tag, line number, valve code and note — including rotated text." },
-  { icon: Layers, title: "Understand the P&ID", desc: "ISA 5.1 instruments, API RP 14C equipment, line designations and piping specs are decoded against your project standards." },
-  { icon: Waypoints, title: "Build HAZOP nodes", desc: "Nodes, guide-word deviations, causes, consequences and the safeguards actually shown on the drawing." },
-  { icon: Gauge, title: "Rank risk & recommend", desc: "5×5 risk matrix (C × L) with specific, actionable recommendations — ready for the HAZOP team to review." },
+  {
+    icon: ScanText,
+    title: "Read the drawing",
+    desc: "PDF text layer or tiled OCR (Optical Character Recognition) picks up every tag, line number, valve code and note — including rotated text.",
+  },
+  { icon: Layers, title: "Understand the P&ID", desc: "ISA 5.1 instruments, API RP 14C equipment, line designations and piping specs are decoded." },
+  {
+    icon: Waypoints,
+    title: "Evaluate risk scenarios",
+    desc: "Evaluate risk scenarios against each guide-word deviation for causes, consequences and the safeguards shown on the drawing.",
+  },
+  { icon: Gauge, title: "Rank risk & recommend", desc: "5×5 or 6×6 risk matrix (C × L) with specific, actionable recommendations — ready for the HAZOP team to review." },
 ];
 
 const OUTPUTS = [
   { icon: FileText, title: "Word worksheet", desc: "Your company template, landscape, with risk colours" },
   { icon: FileSpreadsheet, title: "Excel workbook", desc: "Worksheet, recommendations, risk matrix & extracted data" },
-  { icon: Braces, title: "JSON", desc: "Structured data for your own tools" },
 ];
 
 export default function Home({
@@ -45,7 +51,7 @@ export default function Home({
   health: Health | null;
   backendDown: boolean;
   onRetryHealth: () => void;
-  onStart: (file: File | null, opts: JobOptions) => void;
+  onStart: (file: File, docs: ProjectDocuments, opts: JobOptions) => void;
   submitting: boolean;
   lastJob: string | null;
   onOpenLast: () => void;
@@ -107,15 +113,16 @@ export default function Home({
               From P&amp;ID to <span className="text-gradient">HAZOP worksheet</span> in minutes.
             </h1>
             <p className="mt-5 max-w-xl text-base leading-relaxed text-slate-300 sm:text-lg">
-              Upload a drawing and HAZOP Studio extracts equipment, instruments, lines and valves, then drafts nodes,
-              deviations, safeguards, risk rankings and recommendations — in a table you can review, edit and export.
+              Upload a drawing with your piping specification and risk matrix. HAZOP Studio extracts equipment, instruments,
+              lines and valves, then drafts nodes, deviations, safeguards, risk rankings and recommendations — in a table
+              you can review, edit and export.
             </p>
 
             <div className="mt-8 grid max-w-xl grid-cols-3 gap-3">
               {[
                 { k: "10+", v: "guide-word deviations per node" },
-                { k: "5×5", v: "risk matrix, colour coded" },
-                { k: "3", v: "export formats incl. your Word template" },
+                { k: "5×5 / 6×6", v: "risk matrix from your project, colour coded" },
+                { k: "2", v: "export formats: Word template and Excel" },
               ].map((s) => (
                 <div key={s.k} className="rounded-2xl bg-white/[0.04] p-3.5 ring-1 ring-white/10 backdrop-blur">
                   <div className="text-2xl font-semibold text-white">{s.k}</div>
@@ -196,7 +203,7 @@ export default function Home({
               Adjust consequence and likelihood rankings in the browser — risk colours and exports update instantly.
             </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             {OUTPUTS.map((o) => (
               <div key={o.title} className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
                 <o.icon className="h-5 w-5 text-brand-600" />
@@ -211,7 +218,10 @@ export default function Home({
       <footer className="mt-auto border-t border-slate-200 bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-5 py-6 text-xs text-slate-500 sm:px-8">
           <Logo />
-          <p>Generated worksheets are a draft to support a facilitated HAZOP team review, not a substitute for one.</p>
+          <p>
+            Generated worksheets are a starting point to support a facilitated HAZOP team review, not a substitute for the final
+            HAZOP report.
+          </p>
         </div>
       </footer>
     </>

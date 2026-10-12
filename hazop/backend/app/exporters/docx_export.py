@@ -10,7 +10,8 @@ from docx.oxml.ns import qn
 from docx.shared import Emu, Pt, RGBColor
 
 from ..config import TEMPLATE_DOCX
-from ..risk import LIKELIHOOD, RISK_BANDS, SEVERITY, evaluate
+from .. import risk
+from ..risk import evaluate
 
 HEADER_FILL = "C0E0FF"
 FONT = "Arial"
@@ -181,7 +182,7 @@ class WorksheetBuilder:
             for i, row in enumerate(dev["rows"]):
                 tr = copy.deepcopy(self.row_proto)
                 tcs = tr.findall(qn("w:tc"))
-                risk = evaluate(row["c"], row["l"])
+                row_risk = evaluate(row["c"], row["l"])
                 rec_lines = []
                 for rid in row.get("recommendations", []):
                     if rid in seen_recs:
@@ -198,8 +199,8 @@ class WorksheetBuilder:
                 fill_cell(tcs[COL_TAG], row.get("tags", []))
                 fill_cell(tcs[COL_C], [str(row["c"])])
                 fill_cell(tcs[COL_L], [str(row["l"])])
-                fill_cell(tcs[COL_RISK], [str(risk["score"]), risk["code"]], bold=True)
-                set_shading(tcs[COL_RISK], _fill(risk["color"]))
+                fill_cell(tcs[COL_RISK], [str(row_risk["score"]), row_risk["code"]], bold=True)
+                set_shading(tcs[COL_RISK], _fill(row_risk["color"]))
                 fill_cell(tcs[COL_REC], rec_lines)
                 tbl.append(tr)
 
@@ -211,7 +212,7 @@ def build_docx(result):
     b.doc.core_properties.title = f"{study.get('title', 'HAZOP Worksheets')} - {study.get('drawing', '')}".strip(" -")
 
     b.heading(study.get("title") or "HAZOP Worksheets")
-    for label, key in (("Project", "project"), ("Facility", "facility"), ("Client", "client"),
+    for label, key in (("Project", "project"), ("Facility", "facility"), ("Company", "client"),
                        ("Drawing", "drawing"), ("Revision", "revision"), ("Study date", "date"),
                        ("HAZOP team", "team"), ("Reference documents", "reference_documents")):
         if study.get(key):
@@ -232,44 +233,44 @@ def build_docx(result):
         for dev in node["deviations"]:
             for row in dev["rows"]:
                 for rid in row.get("recommendations", []):
-                    info = rec_refs.setdefault(rid, {"refs": [], "score": 0})
+                    info = rec_refs.setdefault(rid, {"refs": [], "worst": None})
                     info["refs"].append(dev["deviation"].split(" ")[0])
-                    info["score"] = max(info["score"], int(row["c"]) * int(row["l"]))
+                    info["worst"] = risk.worse(info["worst"], evaluate(row["c"], row["l"]))
 
     b.page_break()
     b.heading("Recommendations Summary", size=12)
     rows, fills = [], {}
     for i, (rid, text) in enumerate(recs.items()):
-        info = rec_refs.get(rid, {"refs": [], "score": 0})
+        info = rec_refs.get(rid, {"refs": [], "worst": None})
         refs = ", ".join(dict.fromkeys(info["refs"]))
-        if info["score"]:
-            band = next(bd for bd in RISK_BANDS if info["score"] <= bd["max"])
-            rows.append([rid, text, refs, f"{info['score']} ({band['name']})", "", "Open"])
-            fills[(i, 3)] = _fill(band["color"])
+        worst = info["worst"]
+        if worst:
+            rows.append([rid, text, refs, f"{worst['score']} ({worst['name']})", "", "Open"])
+            fills[(i, 3)] = _fill(worst["color"])
         else:
             rows.append([rid, text, refs, "-", "", "Open"])
     b.grid_table(["No.", "Recommendation", "Deviation Ref.", "Highest Risk", "Action By", "Status"],
                  rows, [5, 60, 10, 9, 9, 7], fills)
 
-    b.heading("Risk Matrix (Risk = C x L)", size=12)
+    m = risk.current()
+    severity, likelihood = m["severity"], m["likelihood"]
+    b.heading(f"Risk Matrix (Risk = C x L) - {m['name']}" + (f", {m['source']}" if m.get("source") else ""), size=12)
     matrix_rows, matrix_fills = [], {}
-    for r, sev in enumerate(reversed(SEVERITY)):
+    for r, sev in enumerate(reversed(severity)):
         row = [f"C{sev['level']} - {sev['name']}"]
-        for j, lk in enumerate(LIKELIHOOD, start=1):
-            risk = evaluate(sev["level"], lk["level"])
-            row.append(f"{risk['score']} ({risk['code']})")
-            matrix_fills[(r, j)] = _fill(risk["color"])
+        for j, lk in enumerate(likelihood, start=1):
+            cell_risk = evaluate(sev["level"], lk["level"])
+            row.append(f"{cell_risk['score']} ({cell_risk['code']})")
+            matrix_fills[(r, j)] = _fill(cell_risk["color"])
         matrix_rows.append(row)
-    b.grid_table(["Consequence \\ Likelihood"] + [f"L{lk['level']} - {lk['name']}" for lk in LIKELIHOOD],
-                 matrix_rows, [16, 12, 12, 12, 12, 12], matrix_fills)
+    b.grid_table(["Consequence \\ Likelihood"] + [f"L{lk['level']} - {lk['name']}" for lk in likelihood],
+                 matrix_rows, [16] + [12] * len(likelihood), matrix_fills)
     b.grid_table(["C", "Consequence", "Description"],
-                 [[s["level"], s["name"], s["desc"]] for s in SEVERITY], [4, 12, 70])
+                 [[s["level"], s["name"], s["desc"]] for s in severity], [4, 12, 70])
     b.grid_table(["L", "Likelihood", "Description"],
-                 [[lk["level"], lk["name"], lk["desc"]] for lk in LIKELIHOOD], [4, 12, 70])
-    lows = [1] + [bd["max"] + 1 for bd in RISK_BANDS[:-1]]
-    b.grid_table(["Risk", "Score", "Ranking"],
-                 [[bd["code"], f"{lo}-{bd['max']}", bd["name"]] for lo, bd in zip(lows, RISK_BANDS)],
-                 [6, 10, 70], {(i, 0): _fill(bd["color"]) for i, bd in enumerate(RISK_BANDS)})
+                 [[lk["level"], lk["name"], lk["desc"]] for lk in likelihood], [4, 12, 70])
+    b.grid_table(["Risk", "Ranking"], [[bd["code"], bd["name"]] for bd in m["bands"]],
+                 [6, 80], {(i, 0): _fill(bd["color"]) for i, bd in enumerate(m["bands"])})
 
     if result.get("assumptions"):
         b.heading("Assumptions and Basis", size=12)

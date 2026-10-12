@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { Braces, Check, ChevronDown, Download, FileSpreadsheet, FileText, LoaderCircle, TriangleAlert } from "lucide-react";
+import { Check, ChevronDown, Download, FileSpreadsheet, FileText, LoaderCircle, TriangleAlert } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { downloadExport, type ExportFormat } from "@/lib/api";
@@ -11,7 +11,6 @@ import { Button } from "./ui";
 const ITEMS: { fmt: ExportFormat; icon: typeof FileText; title: string; desc: string; tint: string }[] = [
   { fmt: "docx", icon: FileText, title: "Word worksheet", desc: "Company template · .docx", tint: "bg-blue-50 text-blue-600 ring-blue-100" },
   { fmt: "xlsx", icon: FileSpreadsheet, title: "Excel workbook", desc: "Worksheet + data · .xlsx", tint: "bg-emerald-50 text-emerald-600 ring-emerald-100" },
-  { fmt: "json", icon: Braces, title: "JSON data", desc: "For integrations · .json", tint: "bg-slate-100 text-slate-600 ring-slate-200" },
 ];
 
 export default function DownloadMenu({ worksheet, extraction }: { worksheet: Worksheet; extraction: Extraction }) {

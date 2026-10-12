@@ -3,21 +3,23 @@
 import clsx from "clsx";
 import { Grid3x3 } from "lucide-react";
 import { motion } from "motion/react";
-import { bandFor, evaluate, LIKELIHOOD, RISK_BANDS, SEVERITY } from "@/lib/risk";
+import { bandFor, bandsOf, evaluate, useRiskMatrix } from "@/lib/risk";
 import type { WorksheetRow } from "@/lib/types";
 import { SectionTitle } from "./ui";
 
 export default function RiskMatrixView({ rows, onCell }: { rows: WorksheetRow[]; onCell: (c: number, l: number) => void }) {
+  const matrix = useRiskMatrix();
+  const { severity, likelihood } = matrix;
   const count = (c: number, l: number) => rows.filter((r) => r.c === c && r.l === l).length;
-  const max = Math.max(1, ...SEVERITY.flatMap((s) => LIKELIHOOD.map((l) => count(s.level, l.level))));
+  const max = Math.max(1, ...severity.flatMap((s) => likelihood.map((l) => count(s.level, l.level))));
 
   return (
     <div className="grid gap-5 xl:grid-cols-[1.2fr_1fr]">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <SectionTitle
           icon={<Grid3x3 className="h-4 w-4" />}
-          title="Risk matrix (Risk = C × L)"
-          subtitle="Number of worksheet causes in each cell — click a cell to see those rows"
+          title={`Risk matrix ${severity.length} × ${likelihood.length} (Risk = C × L)`}
+          subtitle={`${matrix.source ? `From ${matrix.source} · ` : ""}Number of worksheet causes in each cell — click a cell to see those rows`}
         />
         <div className="mt-6 flex gap-3">
           <div className="flex w-6 items-center justify-center">
@@ -26,16 +28,16 @@ export default function RiskMatrixView({ rows, onCell }: { rows: WorksheetRow[];
             </span>
           </div>
           <div className="flex-1">
-            <div className="grid grid-cols-[110px_repeat(5,1fr)] gap-1.5">
-              {[...SEVERITY].reverse().map((s) => (
+            <div className="grid gap-1.5" style={{ gridTemplateColumns: `110px repeat(${likelihood.length}, minmax(0, 1fr))` }}>
+              {[...severity].reverse().map((s) => (
                 <div key={s.level} className="contents">
                   <div className="flex flex-col justify-center pr-2 text-right">
                     <span className="text-xs font-semibold text-slate-700">C{s.level}</span>
                     <span className="text-[11px] text-slate-400">{s.name}</span>
                   </div>
-                  {LIKELIHOOD.map((l) => {
-                    const risk = evaluate(s.level, l.level);
-                    const b = bandFor(risk.code);
+                  {likelihood.map((l) => {
+                    const risk = evaluate(s.level, l.level, matrix);
+                    const b = bandFor(risk.code, matrix);
                     const n = count(s.level, l.level);
                     return (
                       <motion.button
@@ -68,7 +70,7 @@ export default function RiskMatrixView({ rows, onCell }: { rows: WorksheetRow[];
                 </div>
               ))}
               <div />
-              {LIKELIHOOD.map((l) => (
+              {likelihood.map((l) => (
                 <div key={l.level} className="pt-1 text-center">
                   <div className="text-xs font-semibold text-slate-700">L{l.level}</div>
                   <div className="text-[11px] text-slate-400">{l.name}</div>
@@ -79,13 +81,13 @@ export default function RiskMatrixView({ rows, onCell }: { rows: WorksheetRow[];
           </div>
         </div>
         <div className="mt-6 flex flex-wrap gap-2">
-          {RISK_BANDS.map((b, i) => (
+          {bandsOf(matrix).map((b) => (
             <span
               key={b.code}
               className="inline-flex items-center gap-2 rounded-lg px-2.5 py-1 text-xs font-medium"
               style={{ background: b.color, color: b.text, boxShadow: `inset 0 0 0 1px ${b.ring}` }}
             >
-              <b>{b.code}</b> {b.name} &middot; {i === 0 ? 1 : RISK_BANDS[i - 1].max + 1}–{b.max}
+              <b>{b.code}</b> {b.name}
             </span>
           ))}
         </div>
@@ -93,8 +95,8 @@ export default function RiskMatrixView({ rows, onCell }: { rows: WorksheetRow[];
 
       <div className="space-y-5">
         {[
-          { title: "Consequence (C)", items: SEVERITY },
-          { title: "Likelihood (L)", items: LIKELIHOOD },
+          { title: "Consequence (C)", items: severity },
+          { title: "Likelihood (L)", items: likelihood },
         ].map((t) => (
           <div key={t.title} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 bg-[#E8F1FF] px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-600">

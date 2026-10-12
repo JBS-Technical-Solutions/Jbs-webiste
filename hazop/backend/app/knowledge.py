@@ -1,7 +1,12 @@
 import json
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
 
 from .config import KNOWLEDGE_DIR
+
+# Piping specs uploaded for the current job; the bundled knowledge base is used when none are set.
+_project_specs = ContextVar("project_piping_specs", default=None)
 
 
 def _load(name):
@@ -28,8 +33,21 @@ def piping():
     return _load("piping_specs.json")
 
 
+def specs():
+    return _project_specs.get() or piping()["specs"]
+
+
+@contextmanager
+def using_specs(project_specs):
+    token = _project_specs.set(project_specs or None)
+    try:
+        yield
+    finally:
+        _project_specs.reset(token)
+
+
 def spec(code):
-    return piping()["specs"].get(code)
+    return specs().get(code)
 
 
 def spec_rating_psig(code, temp_f=100):

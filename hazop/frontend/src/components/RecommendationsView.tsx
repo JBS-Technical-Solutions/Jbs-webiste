@@ -3,14 +3,17 @@
 import clsx from "clsx";
 import { BookOpen, Check, Clipboard, ListChecks, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { bandFor } from "@/lib/risk";
+import { BAND_ORDER, bandFor, bandsOf, useRiskMatrix } from "@/lib/risk";
 import type { RiskCode, Worksheet } from "@/lib/types";
 import { RiskBadge, SectionTitle } from "./ui";
+
+const rank = (code: RiskCode | null) => (code ? BAND_ORDER.indexOf(code) : -1);
 
 export default function RecommendationsView({ ws, focus }: { ws: Worksheet; focus: string | null }) {
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(focus);
+  const matrix = useRiskMatrix();
 
   const info = useMemo(() => {
     const m = new Map<string, { refs: string[]; score: number; code: RiskCode | null; nodes: Set<number> }>();
@@ -21,7 +24,7 @@ export default function RecommendationsView({ ws, focus }: { ws: Worksheet; focu
             const cur = m.get(id) ?? { refs: [], score: 0, code: null, nodes: new Set<number>() };
             const ref = d.deviation.split(" ")[0];
             if (!cur.refs.includes(ref)) cur.refs.push(ref);
-            if (r.risk.score > cur.score) {
+            if (rank(r.risk.code) > rank(cur.code) || (r.risk.code === cur.code && r.risk.score > cur.score)) {
               cur.score = r.risk.score;
               cur.code = r.risk.code;
             }
@@ -116,9 +119,9 @@ export default function RecommendationsView({ ws, focus }: { ws: Worksheet; focu
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="text-sm font-semibold text-slate-900">By highest risk</div>
           <div className="mt-3 space-y-2">
-            {(["VH", "H", "M", "L"] as RiskCode[]).map((code) => {
+            {bandsOf(matrix).reverse().map(({ code }) => {
               const n = [...info.values()].filter((x) => x.code === code).length;
-              const b = bandFor(code);
+              const b = bandFor(code, matrix);
               return (
                 <div key={code} className="flex items-center gap-3">
                   <RiskBadge code={code} size="sm" />

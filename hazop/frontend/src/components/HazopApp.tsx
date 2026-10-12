@@ -2,9 +2,10 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { createJob, createSampleJob, getHealth, getJob, type JobOptions } from "@/lib/api";
+import { createJob, getHealth, getJob, type JobOptions, type ProjectDocuments } from "@/lib/api";
 import type { Health, Job } from "@/lib/types";
 import Home from "./Home";
+import NodeEditor from "./NodeEditor";
 import ProgressView from "./ProgressView";
 import ResultsView from "./ResultsView";
 import ErrorView from "./ErrorView";
@@ -30,6 +31,7 @@ function setStoredLastJob(id: string | null) {
 type View =
   | { kind: "home" }
   | { kind: "processing"; job: Job }
+  | { kind: "nodes"; job: Job }
   | { kind: "results"; job: Job }
   | { kind: "error"; message: string; job?: Job };
 
@@ -68,6 +70,11 @@ export default function HazopApp() {
           setView({ kind: "error", message: job.error ?? "Analysis failed", job });
           return;
         }
+        if (job.status === "review") {
+          setStoredLastJob(job.id);
+          setView({ kind: "nodes", job });
+          return;
+        }
         setView((v) => (v.kind === "processing" ? { kind: "processing", job } : v));
       } catch (e) {
         if (cancelled) return;
@@ -85,10 +92,10 @@ export default function HazopApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view.kind, view.kind === "processing" ? view.job.id : null]);
 
-  const start = async (file: File | null, opts: JobOptions) => {
+  const start = async (file: File, docs: ProjectDocuments, opts: JobOptions) => {
     setSubmitting(true);
     try {
-      const job = file ? await createJob(file, opts) : await createSampleJob(opts);
+      const job = await createJob(file, docs, opts);
       setView({ kind: "processing", job });
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
@@ -104,6 +111,7 @@ export default function HazopApp() {
       const job = await getJob(lastJob);
       if (job.status === "done") setView({ kind: "results", job });
       else if (job.status === "error") setView({ kind: "error", message: job.error ?? "Analysis failed", job });
+      else if (job.status === "review") setView({ kind: "nodes", job });
       else setView({ kind: "processing", job });
     } catch {
       setStoredLastJob(null);
@@ -138,6 +146,16 @@ export default function HazopApp() {
           />
         )}
         {view.kind === "processing" && <ProgressView job={view.job} onCancel={goHome} />}
+        {view.kind === "nodes" && (
+          <NodeEditor
+            job={view.job}
+            onCancel={goHome}
+            onSubmitted={(job) => {
+              setView({ kind: "processing", job });
+              window.scrollTo({ top: 0 });
+            }}
+          />
+        )}
         {view.kind === "results" && <ResultsView job={view.job} onNew={goHome} />}
         {view.kind === "error" && <ErrorView message={view.message} job={view.job} onBack={goHome} />}
       </motion.div>
