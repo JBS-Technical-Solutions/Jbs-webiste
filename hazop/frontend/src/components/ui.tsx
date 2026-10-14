@@ -1,13 +1,31 @@
 "use client";
 
 import clsx from "clsx";
+import { usePathname, useRouter } from "next/navigation";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { bandFor, useRiskMatrix } from "@/lib/risk";
 import type { RiskCode } from "@/lib/types";
 
+export const HAZOP_HOME_EVENT = "hazop-studio:home";
+
 export function Logo({ className, light = false }: { className?: string; light?: boolean }) {
+  const pathname = usePathname();
+  const router = useRouter();
   return (
-    <div className={clsx("flex items-center gap-2.5", className)}>
+    <button
+      type="button"
+      aria-label="HAZOP Studio home"
+      title="Back to HAZOP Studio"
+      onClick={() => {
+        window.dispatchEvent(new Event(HAZOP_HOME_EVENT));
+        if (pathname !== "/") router.push("/");
+        window.scrollTo({ top: 0 });
+      }}
+      className={clsx(
+        "flex cursor-pointer items-center gap-2.5 rounded-xl text-left outline-none transition hover:opacity-80 focus-visible:ring-2 focus-visible:ring-brand-400",
+        className,
+      )}
+    >
       <div className="relative grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-brand-500 via-brand-600 to-cyan-500 shadow-lg shadow-brand-600/30">
         <svg viewBox="0 0 24 24" className="h-5 w-5 text-white" fill="none" stroke="currentColor" strokeWidth={2}>
           <path d="M12 2.5 3.5 6v6c0 5 3.6 8.6 8.5 9.5 4.9-.9 8.5-4.5 8.5-9.5V6L12 2.5Z" strokeLinejoin="round" />
@@ -22,7 +40,7 @@ export function Logo({ className, light = false }: { className?: string; light?:
           P&amp;ID &rarr; worksheet
         </div>
       </div>
-    </div>
+    </button>
   );
 }
 

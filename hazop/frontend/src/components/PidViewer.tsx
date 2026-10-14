@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { Crosshair, Eye, EyeOff, Maximize2, Minus, Plus, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, Maximize2, Minus, Plus, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import { imageUrl } from "@/lib/api";
 import type { Box, Extraction } from "@/lib/types";
@@ -23,6 +23,14 @@ interface Entity {
   sub: string;
   detail: string[];
   boxes: Box[];
+  page?: number;
+}
+
+function sameTag(label: string, tag: string) {
+  const norm = (t: string) => t.toUpperCase().replace(/\s*\(.*\)$/, "").replace(/[^A-Z0-9]/g, "");
+  const a = norm(label);
+  const b = norm(tag);
+  return !!b && (a === b || a.includes(b) || b.includes(a));
 }
 
 function buildEntities(ext: Extraction): Entity[] {
@@ -39,6 +47,7 @@ function buildEntities(ext: Extraction): Entity[] {
         e.offpage ? "Off-page reference" : "",
       ].filter(Boolean),
       boxes: e.boxes?.length ? e.boxes : [e.box],
+      page: e.page,
     }),
   );
   ext.instruments.forEach((i) =>
@@ -56,6 +65,7 @@ function buildEntities(ext: Extraction): Entity[] {
         i.inferred ? "Inferred from control loop" : "",
       ].filter(Boolean),
       boxes: [i.box],
+      page: i.page,
     }),
   );
   ext.lines.forEach((l) =>
@@ -70,6 +80,7 @@ function buildEntities(ext: Extraction): Entity[] {
         l.sour ? "Sour service" : "",
       ].filter(Boolean),
       boxes: l.boxes?.length ? l.boxes : [l.box],
+      page: l.page,
     }),
   );
   ext.valves.forEach((v) =>
@@ -80,6 +91,7 @@ function buildEntities(ext: Extraction): Entity[] {
       sub: [v.type, v.size].filter(Boolean).join(" · "),
       detail: v.attributes.length ? [`Marked: ${v.attributes.join(", ")}`] : [],
       boxes: [v.box],
+      page: v.page,
     }),
   );
   ext.connectors.forEach((c) =>
@@ -90,6 +102,7 @@ function buildEntities(ext: Extraction): Entity[] {
       sub: [c.line, c.ref].filter(Boolean).join(" · "),
       detail: [],
       boxes: [c.box],
+      page: c.page,
     }),
   );
   return out;
@@ -105,14 +118,23 @@ export default function PidViewer({
   image,
   extraction,
   focusTag,
+  focusPage = null,
   onFocusHandled,
 }: {
-  image: { width: number; height: number; url: string };
+  image: { width: number; height: number; url: string; page_count?: number; pages?: { width: number; height: number }[] };
   extraction: Extraction;
   focusTag: string | null;
+  focusPage?: number | null;
   onFocusHandled: () => void;
 }) {
   const entities = useMemo(() => buildEntities(extraction), [extraction]);
+  const pages = image.page_count ?? 1;
+  const [page, setPage] = useState(() => {
+    if (typeof focusPage === "number") return Math.max(0, Math.min(pages - 1, focusPage));
+    if (!focusTag || pages <= 1) return 0;
+    return entities.find((e) => sameTag(e.label, focusTag))?.page ?? 0;
+  });
+  const pending = useRef<string | null>(null);
   const [layers, setLayers] = useState<Record<Layer, boolean>>({
     equipment: true,
     instruments: true,
@@ -132,17 +154,20 @@ export default function PidViewer({
   const [animate, setAnimate] = useState(false);
   const drag = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean } | null>(null);
   const interacted = useRef(false);
+  const sheet = image.pages?.[page];
+  const drawW = sheet?.width || image.width || 1;
+  const drawH = sheet?.height || image.height || 1;
 
   const baseW = size.w;
-  const baseH = (size.w * image.height) / image.width;
+  const baseH = (size.w * drawH) / drawW;
 
   const fitView = useCallback(
     (w: number, h: number): View => {
-      const bh = (w * image.height) / image.width;
+      const bh = (w * drawH) / drawW;
       const s = Math.min(1, h / bh);
       return { s, x: (w - w * s) / 2, y: (h - bh * s) / 2 };
     },
-    [image.width, image.height],
+    [drawW, drawH],
   );
 
   const fit = () => {
@@ -192,7 +217,7 @@ export default function PidViewer({
     const w = rect?.width ?? size.w;
     const h = rect?.height ?? size.h;
     const bw = w;
-    const bh = (w * image.height) / image.width;
+    const bh = (w * drawH) / drawW;
     const b = ent.boxes[0];
     const cx = ((b[0] + b[2]) / 2) * bw;
     const cy = ((b[1] + b[3]) / 2) * bh;
@@ -204,14 +229,47 @@ export default function PidViewer({
     setLayers((l) => ({ ...l, [ent.layer]: true }));
   };
 
+  const showSheet = (next: number) => {
+    const clamped = Math.max(0, Math.min(pages - 1, next));
+    if (clamped === page) return;
+    pending.current = null;
+    interacted.current = false;
+    setLoaded(false);
+    setSelected(null);
+    setPage(clamped);
+  };
+
+  const openEntity = (ent: Entity) => {
+    if (ent.page !== undefined && ent.page !== page) {
+      pending.current = ent.key;
+      interacted.current = false;
+      setLoaded(false);
+      setPage(ent.page);
+      return;
+    }
+    focusEntity(ent);
+  };
+
   const onImageLoad = () => {
     setLoaded(true);
-    if (!focusTag) return;
-    const norm = (t: string) => t.toUpperCase().replace(/\s*\(.*\)$/, "").replace(/[^A-Z0-9]/g, "");
-    const target = norm(focusTag);
-    const ent =
-      entities.find((e) => norm(e.label) === target) ??
-      entities.find((e) => norm(e.label).includes(target) || target.includes(norm(e.label)));
+    const pendingKey = pending.current;
+    pending.current = null;
+    if (pendingKey) {
+      const ent = entities.find((e) => e.key === pendingKey);
+      if (ent) setTimeout(() => focusEntity(ent), 50);
+      return;
+    }
+    if (!focusTag) {
+      onFocusHandled();
+      return;
+    }
+    const here = entities.filter((e) => e.page === undefined || e.page === page);
+    const ent = here.find((e) => sameTag(e.label, focusTag)) ?? entities.find((e) => sameTag(e.label, focusTag));
+    if (ent && ent.page !== undefined && ent.page !== page) {
+      pending.current = ent.key;
+      setPage(ent.page);
+      return;
+    }
     if (ent) {
       setTimeout(() => {
         focusEntity(ent);
@@ -243,11 +301,12 @@ export default function PidViewer({
   };
 
   const q = query.trim().toLowerCase();
+  const onPage = entities.filter((e) => e.page === undefined || e.page === page);
   const listed = entities.filter(
-    (e) => (listLayer === "all" || e.layer === listLayer) && (!q || `${e.label} ${e.sub}`.toLowerCase().includes(q)),
+    (e) => (listLayer === "all" || e.layer === listLayer) && (!q || `${e.label} ${e.sub} sheet ${((e.page ?? 0) + 1)}`.toLowerCase().includes(q)),
   );
   const sel = entities.find((e) => e.key === selected);
-  const counts = Object.fromEntries(LAYERS.map((l) => [l.id, entities.filter((e) => e.layer === l.id).length])) as Record<Layer, number>;
+  const counts = Object.fromEntries(LAYERS.map((l) => [l.id, onPage.filter((e) => e.layer === l.id).length])) as Record<Layer, number>;
 
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
@@ -280,6 +339,29 @@ export default function PidViewer({
             <button onClick={() => fit()} className="grid h-8 w-8 place-items-center rounded-lg text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50" aria-label="Fit to screen">
               <Maximize2 className="h-4 w-4" />
             </button>
+            {pages > 1 && (
+              <div className="ml-1 flex items-center gap-1 rounded-lg bg-slate-50 p-0.5 ring-1 ring-slate-200">
+                <button type="button" onClick={() => showSheet(page - 1)} disabled={page === 0} className="grid h-7 w-7 place-items-center rounded-md text-slate-600 hover:bg-white disabled:opacity-30" aria-label="Previous sheet">
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <label className="flex items-center gap-1 px-1 text-[11px] text-slate-500">
+                  Sheet
+                  <input
+                    type="number"
+                    min={1}
+                    max={pages}
+                    value={page + 1}
+                    onChange={(e) => showSheet((Number(e.target.value) || 1) - 1)}
+                    className="h-7 w-14 rounded-md border border-slate-200 bg-white text-center text-xs font-semibold text-slate-800 outline-none focus:border-brand-400"
+                    aria-label="Sheet number"
+                  />
+                  <span className="tabular-nums">/ {pages}</span>
+                </label>
+                <button type="button" onClick={() => showSheet(page + 1)} disabled={page === pages - 1} className="grid h-7 w-7 place-items-center rounded-md text-slate-600 hover:bg-white disabled:opacity-30" aria-label="Next sheet">
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -302,14 +384,15 @@ export default function PidViewer({
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={imageUrl(image.url)}
-              alt="P&ID"
+              key={page}
+              src={`${imageUrl(image.url)}?page=${page}`}
+              alt={`P&ID sheet ${page + 1}`}
               draggable={false}
               onLoad={onImageLoad}
               className="pointer-events-none h-full w-full bg-white shadow-xl"
             />
             {loaded &&
-              entities
+              onPage
                 .filter((e) => layers[e.layer])
                 .flatMap((e) =>
                   e.boxes.map((b, i) => {
@@ -374,7 +457,7 @@ export default function PidViewer({
         <div className="border-b border-slate-200 p-3">
           <div className="text-sm font-semibold text-slate-900">Extracted from the drawing</div>
           <div className="mt-0.5 text-xs text-slate-500">
-            {entities.length} entities &middot; {extraction.token_count} text items
+            {pages > 1 ? `${onPage.length} on this sheet · ${entities.length} in the PDF` : `${entities.length} entities`} &middot; {extraction.token_count} text items
             {extraction.flags.sour_service && <span className="ml-1 rounded bg-amber-50 px-1 text-amber-700">sour service</span>}
           </div>
           <div className="relative mt-3">
@@ -407,7 +490,7 @@ export default function PidViewer({
             return (
               <li key={e.key} id={`ent-${e.key}`}>
                 <button
-                  onClick={() => focusEntity(e)}
+                  onClick={() => openEntity(e)}
                   onMouseEnter={() => setHovered(e.key)}
                   onMouseLeave={() => setHovered(null)}
                   className={clsx(
@@ -417,7 +500,10 @@ export default function PidViewer({
                 >
                   <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: L.color }} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-mono text-[12px] font-semibold text-slate-800">{e.label}</span>
+                    <span className="block truncate font-mono text-[12px] font-semibold text-slate-800">
+                      {pages > 1 && e.page !== undefined && <span className="mr-1 text-slate-400">S{e.page + 1}</span>}
+                      {e.label}
+                    </span>
                     <span className="block truncate text-[11px] text-slate-500">{e.sub}</span>
                   </span>
                   <Crosshair className="mt-1 h-3.5 w-3.5 shrink-0 text-slate-300 opacity-0 transition group-hover:opacity-100" />

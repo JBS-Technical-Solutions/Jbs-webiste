@@ -724,7 +724,7 @@ def parse_risk_matrix(data, filename="risk matrix"):
             problem, matrix = problem or e, None
         matrix = matrix or _score_grid(ws, filename)
         if matrix:
-            return matrix
+            return kb.apply_matrix_definitions(matrix)
     if problem:
         raise problem
     raise DocumentError(

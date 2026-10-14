@@ -29,12 +29,14 @@ Rules:
 - For each node use relevant guide-word deviations (No/Less Flow, More Flow, Reverse Flow, High/Low Pressure,
   High/Low Temperature, High/Low Level, Composition/Contamination, Utility Failure, Maintenance/Start-up).
 - Each row: one credible cause, numbered consequences (escalation to the worst credible outcome without safeguards),
-  CC (S = Safety, E = Environment, A = Asset), safeguards actually shown on the P&ID with their tags, and C and L
-  (integers, ranked with safeguards in place) using the project risk matrix given in the input (its consequence and
-  likelihood levels and the ranking of each cell).
+  CC (S = Safety, E = Environment, A = Asset), safeguards actually shown on the P&ID with their tags, and C and L.
+  C and L must be levels of the uploaded risk matrix in the input. The risk ranking is that file's cell at (C, L).
+  Do not invent a ranking from a generic C times L score.
 - Additional project documents (e.g. PFD) may be attached; use them for context, but tags must still come from the P&ID.
 - Recommendations must be specific and actionable; reuse the same recommendation id when the same action applies.
 - Respect piping spec ratings, design pressures/temperatures and sour service when judging consequences.
+- A company-standards block is included in the user message. Treat it as the project legend: tag structure, line graphics,
+  instrument bubbles, piping symbols, piping classes and the risk-matrix definitions. Prefer it over a generic ISA reading.
 - Output ONLY JSON, no markdown, matching exactly this schema:
 {"nodes":[{"id":1,"title":"...","boundary":"...","design_intent":"...","design_conditions":"...",
   "deviations":[{"deviation":"No / Less Flow","rows":[{"cause":"...","consequences":["..."],"cc":"S",
@@ -69,7 +71,7 @@ FIXED_NODES = ("The nodes in the draft worksheet were defined by the user. Keep 
 
 def _prompt(ext, draft, texts, fixed_nodes):
     specs = {code: {k: v for k, v in s.items() if k != "pressure_temp"} for code, s in kb.specs().items()}
-    m = risk.current()
+    m = kb.apply_matrix_definitions(risk.current())
     nc, nl = risk.size(m)
     payload = {
         "extracted_entities": _entities_summary(ext),
@@ -83,7 +85,8 @@ def _prompt(ext, draft, texts, fixed_nodes):
     }
     if texts:
         payload["project_documents"] = texts
-    head = (f"Review the attached P&ID and produce the final HAZOP worksheet JSON. C must be 1-{nc} and L must be 1-{nl}.")
+    head = (f"Review the attached P&ID and produce the final HAZOP worksheet JSON. C must be 1-{nc} and L must be 1-{nl}.\n\n"
+            + kb.model_brief())
     if fixed_nodes:
         head += " " + FIXED_NODES
     return head + "\n\n" + json.dumps(payload, ensure_ascii=False, default=str)

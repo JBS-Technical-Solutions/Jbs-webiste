@@ -2,7 +2,7 @@
 
 import clsx from "clsx";
 import { ChevronDown, Funnel, Search, X } from "lucide-react";
-import { Fragment, useMemo } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { bandFor, bandsOf, CC_LABEL, useRiskMatrix } from "@/lib/risk";
 import type { HazopNode, RiskCode, Worksheet, WorksheetRow } from "@/lib/types";
 import { RiskBadge } from "./ui";
@@ -29,7 +29,18 @@ function maxRisk(node: HazopNode): RiskCode {
 }
 
 function rowText(dev: string, row: WorksheetRow, recs: Record<string, string>) {
-  return [dev, row.cause, ...row.consequences, ...row.safeguards, ...row.tags, ...row.recommendations.map((r) => `${r} ${recs[r] ?? ""}`)]
+  const source = row.source;
+  return [
+    dev,
+    row.cause,
+    ...row.consequences,
+    ...row.safeguards,
+    ...row.tags,
+    ...row.recommendations.map((r) => `${r} ${recs[r] ?? ""}`),
+    source?.file ?? "",
+    source?.tag ?? "",
+    ...(source?.review ?? []),
+  ]
     .join(" ")
     .toLowerCase();
 }
@@ -43,6 +54,130 @@ function splitTags(tag: string) {
 
 function focusable(tag: string) {
   return /[A-Z]{1,4}-?\d/.test(tag) || /-[A-Z]\d/.test(tag);
+}
+
+const CC_ORDER = ["S", "E", "A"] as const;
+
+function InlineText({
+  value,
+  onCommit,
+  className,
+  dark,
+}: {
+  value: string;
+  onCommit: (value: string) => void;
+  className?: string;
+  dark?: boolean;
+}) {
+  const [draft, setDraft] = useState<string | null>(value === "" ? "" : null);
+  if (draft === null) {
+    return (
+      <button
+        type="button"
+        onClick={() => setDraft(value)}
+        title="Click to edit"
+        className={clsx(
+          "w-full rounded-md px-1 py-0.5 text-left transition",
+          dark ? "hover:bg-white/10" : "hover:bg-white hover:ring-1 hover:ring-brand-200",
+          className,
+        )}
+      >
+        {value || <span className="text-slate-300">Click to add</span>}
+      </button>
+    );
+  }
+  const save = () => {
+    const next = draft.trim();
+    if (next !== value) onCommit(next);
+    setDraft(null);
+  };
+  return (
+    <textarea
+      autoFocus
+      rows={Math.min(8, Math.max(2, draft.split("\n").length + 1))}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={save}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setDraft(null);
+        } else if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          e.currentTarget.blur();
+        }
+      }}
+      className={clsx(
+        "w-full resize-y rounded-md px-1.5 py-1 text-[13px] leading-relaxed outline-none",
+        dark
+          ? "border border-white/30 bg-white/10 text-white ring-2 ring-white/20"
+          : "border border-brand-300 bg-white text-slate-800 ring-2 ring-brand-100",
+      )}
+    />
+  );
+}
+
+function EditableList({ items, onChange }: { items: string[]; onChange: (items: string[]) => void }) {
+  return (
+    <ol className="space-y-1">
+      {items.map((item, i) => (
+        <li key={`${i}-${item === "" ? "new" : "set"}`} className="group/item flex gap-1">
+          <span className="mt-0.5 shrink-0 font-semibold text-slate-400">{i + 1}.</span>
+          <InlineText
+            value={item}
+            onCommit={(v) => onChange(v ? items.map((x, j) => (j === i ? v : x)) : items.filter((_, j) => j !== i))}
+            className="min-w-0 flex-1"
+          />
+          <button
+            type="button"
+            aria-label="Remove line"
+            title="Remove line"
+            onClick={() => onChange(items.filter((_, j) => j !== i))}
+            className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded text-slate-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-600 group-hover/item:opacity-100"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </li>
+      ))}
+      <li>
+        <button
+          type="button"
+          onClick={() => onChange([...items, ""])}
+          className="rounded-md px-1 py-0.5 text-[11px] font-medium text-brand-600 hover:bg-brand-50"
+        >
+          + Add line
+        </button>
+      </li>
+    </ol>
+  );
+}
+
+function CcEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const on = new Set(value.split(/[,/ ]+/).filter(Boolean));
+  return (
+    <div className="flex flex-col items-center gap-1">
+      {CC_ORDER.map((c) => (
+        <button
+          key={c}
+          type="button"
+          title={`${CC_LABEL[c] ?? c} — click to toggle`}
+          onClick={() => {
+            const next = new Set(on);
+            if (next.has(c)) next.delete(c);
+            else next.add(c);
+            const picked = CC_ORDER.filter((x) => next.has(x));
+            onChange((picked.length ? picked : ["S"]).join(","));
+          }}
+          className={clsx(
+            "rounded-md px-1.5 py-0.5 text-[11px] font-bold ring-1 transition",
+            on.has(c) ? CC_STYLE[c] : "bg-white text-slate-300 ring-slate-200 hover:text-slate-500",
+          )}
+        >
+          {c}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function LevelSelect({ value, onChange, kind }: { value: number; onChange: (v: number) => void; kind: "C" | "L" }) {
@@ -76,15 +211,21 @@ export default function WorksheetView({
   filter,
   setFilter,
   onUpdate,
+  onUpdateNode,
+  onUpdateRec,
   onTag,
   onRec,
+  onOpenSource,
 }: {
   ws: Worksheet;
   filter: WorksheetFilter;
   setFilter: (f: WorksheetFilter | ((f: WorksheetFilter) => WorksheetFilter)) => void;
-  onUpdate: (n: number, d: number, r: number, patch: { c?: number; l?: number }) => void;
+  onUpdate: (n: number, d: number, r: number, patch: Partial<Pick<WorksheetRow, "cause" | "consequences" | "safeguards" | "cc" | "c" | "l">>) => void;
+  onUpdateNode: (n: number, patch: Partial<Pick<HazopNode, "title" | "boundary" | "design_intent" | "design_conditions">>) => void;
+  onUpdateRec: (id: string, text: string) => void;
   onTag: (tag: string) => void;
   onRec: (id: string) => void;
+  onOpenSource: (source: NonNullable<WorksheetRow["source"]>) => void;
 }) {
   const matrix = useRiskMatrix();
   // First place each recommendation appears (worksheet order); later rows say "refer above".
@@ -223,6 +364,11 @@ export default function WorksheetView({
             </button>
           </div>
         )}
+        {!active && (
+          <div className="mt-2.5 border-t border-slate-100 pt-2.5 text-[11px] text-slate-400">
+            Click any wording, S / E / A, or a recommendation to edit it. C and L update the risk colour. Downloads include your edits.
+          </div>
+        )}
       </div>
 
       {visible.length === 0 && (
@@ -238,28 +384,34 @@ export default function WorksheetView({
             <div className="bg-grid-dark absolute inset-0 opacity-60" />
             <div className="relative flex flex-wrap items-center gap-3">
               <span className="rounded-lg bg-white/10 px-2.5 py-1 text-xs font-semibold ring-1 ring-white/20">Node {node.id}</span>
-              <h2 className="text-base font-semibold sm:text-lg">{node.title}</h2>
+              <h2 className="min-w-0 flex-1 text-base font-semibold sm:text-lg">
+                <InlineText dark value={node.title} onCommit={(title) => title && onUpdateNode(ni, { title })} />
+              </h2>
               <span className="ml-auto flex items-center gap-2 text-xs text-slate-300">
                 Highest risk <RiskBadge code={maxRisk(node)} size="sm" />
               </span>
             </div>
           </div>
           <div className="grid gap-px bg-slate-200 md:grid-cols-3">
-            {[
-              ["Node boundary", node.boundary],
-              ["Design intent", node.design_intent],
-              ["Design conditions", node.design_conditions],
-            ].map(([label, text]) => (
+            {(
+              [
+                ["Node boundary", "boundary", node.boundary],
+                ["Design intent", "design_intent", node.design_intent],
+                ["Design conditions", "design_conditions", node.design_conditions],
+              ] as const
+            ).map(([label, key, text]) => (
               <div key={label} className="bg-slate-50/80 px-5 py-3.5">
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</div>
-                <p className="mt-1 text-[13px] leading-relaxed text-slate-700">{text || "—"}</p>
+                <div className="mt-1 text-[13px] leading-relaxed text-slate-700">
+                  <InlineText value={text} onCommit={(v) => onUpdateNode(ni, { [key]: v })} />
+                </div>
               </div>
             ))}
           </div>
 
           {/* Worksheet table */}
-          <div className="scrollbar-thin overflow-x-auto">
-            <table className="w-full min-w-[1240px] border-collapse text-[13px] leading-relaxed">
+          <div className="scrollbar-thin max-h-[72vh] overflow-auto">
+            <table className="ws-table w-full min-w-[1240px] border-collapse text-[13px] leading-relaxed">
               <thead>
                 <tr className="bg-[#E8F1FF] text-left text-[11px] font-semibold uppercase tracking-wider text-slate-600">
                   <th className="w-[150px] border-b border-r border-slate-200 px-3 py-2.5">Deviation</th>
@@ -280,7 +432,13 @@ export default function WorksheetView({
                     {rows.map(({ row, ri }, idx) => {
                       const key = `${ni}-${di}-${ri}`;
                       return (
-                        <tr key={key} className="group align-top transition-colors hover:bg-brand-50/30">
+                        <tr
+                          key={key}
+                          className={clsx(
+                            "group align-top transition-colors",
+                            row.source && row.source.verified === false ? "bg-rose-50 hover:bg-rose-100/70" : "hover:bg-brand-50/30",
+                          )}
+                        >
                           {idx === 0 && (
                             <td rowSpan={rows.length} className="border-b border-r border-slate-200 bg-slate-50/60 px-3 py-3">
                               <div className="font-mono text-[11px] font-semibold text-brand-600">{dev.deviation.split(" ")[0]}</div>
@@ -288,39 +446,40 @@ export default function WorksheetView({
                             </td>
                           )}
                           <td className="border-b border-r border-slate-200 px-3 py-3 text-slate-800">
-                            <span className="mr-1 font-semibold text-slate-400">{ri + 1}.</span>
-                            {row.cause}
+                            <div className="flex gap-1">
+                              <span className="mt-0.5 shrink-0 font-semibold text-slate-400">{ri + 1}.</span>
+                              <InlineText value={row.cause} onCommit={(cause) => cause && onUpdate(ni, di, ri, { cause })} className="min-w-0 flex-1" />
+                            </div>
+                            {row.source && (
+                              <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenSource(row.source!)}
+                                  title="Open this drawing"
+                                  className="max-w-full truncate rounded-md bg-white px-1.5 py-0.5 text-left text-[10px] font-medium text-slate-600 ring-1 ring-slate-200 transition hover:bg-brand-50 hover:text-brand-700 hover:ring-brand-300"
+                                >
+                                  {row.source.file} · p.{row.source.page + 1}
+                                  {row.source.tag ? ` · ${row.source.tag}` : ""}
+                                </button>
+                                {row.source.review.length > 0 && (
+                                  <span
+                                    title={row.source.review.join("\n")}
+                                    className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200"
+                                  >
+                                    Needs review
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </td>
                           <td className="border-b border-r border-slate-200 px-3 py-3 text-slate-700">
-                            <ol className="space-y-1">
-                              {row.consequences.map((c, i) => (
-                                <li key={i} className="flex gap-1.5">
-                                  <span className="shrink-0 font-semibold text-slate-400">{i + 1}.</span>
-                                  <span>{c}</span>
-                                </li>
-                              ))}
-                            </ol>
+                            <EditableList items={row.consequences} onChange={(consequences) => onUpdate(ni, di, ri, { consequences })} />
                           </td>
                           <td className="border-b border-r border-slate-200 px-2 py-3 text-center">
-                            {row.cc.split(/[,/ ]+/).filter(Boolean).map((c) => (
-                              <span
-                                key={c}
-                                title={CC_LABEL[c] ?? c}
-                                className={clsx("mb-1 inline-block rounded-md px-1.5 py-0.5 text-[11px] font-bold ring-1", CC_STYLE[c] ?? "bg-slate-50 ring-slate-200")}
-                              >
-                                {c}
-                              </span>
-                            ))}
+                            <CcEditor value={row.cc} onChange={(cc) => onUpdate(ni, di, ri, { cc })} />
                           </td>
                           <td className="border-b border-r border-slate-200 px-3 py-3 text-slate-700">
-                            <ol className="space-y-1">
-                              {row.safeguards.map((s, i) => (
-                                <li key={i} className="flex gap-1.5">
-                                  <span className="shrink-0 font-semibold text-slate-400">{i + 1}.</span>
-                                  <span>{s}</span>
-                                </li>
-                              ))}
-                            </ol>
+                            <EditableList items={row.safeguards} onChange={(safeguards) => onUpdate(ni, di, ri, { safeguards })} />
                           </td>
                           <td className="border-b border-r border-slate-200 px-3 py-3">
                             <div className="flex flex-col items-start gap-1">
@@ -369,7 +528,7 @@ export default function WorksheetView({
                                       {id}
                                     </button>
                                     {firstRec.get(id) === key ? (
-                                      <span>{ws.recommendations[id]}</span>
+                                      <InlineText value={ws.recommendations[id] ?? ""} onCommit={(text) => text && onUpdateRec(id, text)} className="min-w-0 flex-1" />
                                     ) : (
                                       <span className="italic text-slate-400">Refer above.</span>
                                     )}

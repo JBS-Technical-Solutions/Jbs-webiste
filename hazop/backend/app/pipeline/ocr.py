@@ -7,11 +7,13 @@ import threading
 import unicodedata
 
 import numpy as np
+from PIL import Image
 
 from ..config import CACHE_DIR, OCR_MODELS_DIR
 
 TILE = 1400
 OVERLAP = 220
+ZOOM = 2
 BLANK_THRESHOLD = 252
 MIN_SCORE = 0.6
 TAG_LIKE = re.compile(r'[A-Z]{1,3}-\d|\d"|-[A-Z]{1,2}\d?-|^[A-Z]{1,3}-?\d{2,3}N$')
@@ -76,17 +78,26 @@ def _rgb(a):
     return np.ascontiguousarray(np.stack([a] * 3, axis=-1))
 
 
+def _zoom(gray):
+    """Enlarge a crop before recognition so small tags stay legible."""
+    if ZOOM == 1 or gray.size == 0:
+        return gray
+    img = Image.fromarray(gray).resize((max(1, gray.shape[1] * ZOOM), max(1, gray.shape[0] * ZOOM)), Image.Resampling.LANCZOS)
+    return np.asarray(img)
+
+
 def _detect(img, progress):
     engine = _ocr_engine()
     tiles = _active_tiles(img)
     out = []
     for i, (x, y) in enumerate(tiles):
-        for box, text, score in _read_full(engine, _rgb(img[y:y + TILE, x:x + TILE])):
+        crop = _zoom(img[y:y + TILE, x:x + TILE])
+        for box, text, score in _read_full(engine, _rgb(crop)):
             score = float(score)
             if score < MIN_SCORE or not text.strip():
                 continue
-            xs = [p[0] + x for p in box]
-            ys = [p[1] + y for p in box]
+            xs = [p[0] / ZOOM + x for p in box]
+            ys = [p[1] / ZOOM + y for p in box]
             out.append({"text": text.strip(), "score": round(score, 3),
                         "box": [min(xs), min(ys), max(xs), max(ys)], "rot": 0})
         if progress:
@@ -112,7 +123,7 @@ def _reread_vertical(img, tokens, progress):
     for i, t in enumerate(tall):
         x0, y0, x1, y1 = (int(v) for v in t["box"])
         pad = 4
-        crop = img[max(0, y0 - pad):min(H, y1 + pad), max(0, x0 - pad):min(W, x1 + pad)]
+        crop = _zoom(img[max(0, y0 - pad):min(H, y1 + pad), max(0, x0 - pad):min(W, x1 + pad)])
         best = (t["text"], t["score"], _rank(t["text"], t["score"]))
         for k in (-1, 1):
             res = _read_line(engine, _rgb(np.rot90(crop, k=k)))

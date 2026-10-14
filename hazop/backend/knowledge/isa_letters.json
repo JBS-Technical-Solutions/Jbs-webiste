@@ -16,7 +16,7 @@
     "M": "Humidity",
     "N": "Lambda",
     "O": "Stonewall line (percent)",
-    "P": "Pressure",
+    "P": "Pressure / Vacuum",
     "Q": "Quantity",
     "R": "Radiation / Resistance",
     "S": "Speed",
@@ -42,7 +42,7 @@
   "succeeding": {
     "A": "Alarm",
     "C": "Controller",
-    "E": "Element",
+    "E": "Sensor",
     "G": "Gauge",
     "I": "Indicator",
     "J": "Scan",
@@ -54,8 +54,8 @@
     "S": "Switch",
     "T": "Transmitter",
     "V": "Valve",
-    "W": "Thermowell",
-    "Y": "Relay / Converter",
+    "W": "Well",
+    "Y": "Relay",
     "Z": "Actuator"
   },
   "succeeding_modifier": {

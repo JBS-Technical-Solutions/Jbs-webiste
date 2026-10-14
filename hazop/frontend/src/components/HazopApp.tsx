@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { accountSnapshot, parseAccount, saveAccount, subscribeAccount } from "@/lib/account";
 import { createJob, getAccount, getHealth, getJob, signOut, type JobOptions, type ProjectDocuments } from "@/lib/api";
 import type { Health, Job } from "@/lib/types";
+import { HAZOP_HOME_EVENT } from "./ui";
 import Home from "./Home";
 import NodeEditor from "./NodeEditor";
 import ProgressView from "./ProgressView";
@@ -67,6 +68,16 @@ export default function HazopApp() {
   useEffect(checkHealth, [checkHealth]);
 
   useEffect(() => {
+    const onHome = () => {
+      setView({ kind: "home" });
+      checkHealth();
+      window.scrollTo({ top: 0 });
+    };
+    window.addEventListener(HAZOP_HOME_EVENT, onHome);
+    return () => window.removeEventListener(HAZOP_HOME_EVENT, onHome);
+  }, [checkHealth]);
+
+  useEffect(() => {
     if (view.kind !== "processing") return;
     let cancelled = false;
     const tick = async () => {
@@ -104,10 +115,10 @@ export default function HazopApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view.kind, view.kind === "processing" ? view.job.id : null]);
 
-  const start = async (file: File, docs: ProjectDocuments, opts: JobOptions) => {
+  const start = async (files: File[], docs: ProjectDocuments, opts: JobOptions) => {
     setSubmitting(true);
     try {
-      const job = await createJob(file, docs, opts);
+      const job = await createJob(files, docs, opts);
       setView({ kind: "processing", job });
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {

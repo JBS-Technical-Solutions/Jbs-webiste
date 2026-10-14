@@ -108,6 +108,38 @@ export default function ProgressView({ job, onCancel }: { job: Job; onCancel: ()
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Analysing your P&amp;ID</h1>
           <p className="mt-1 text-sm text-slate-500">You can keep this tab open — the worksheet appears automatically.</p>
+          {job.detail && <p className="mt-2 text-sm font-medium text-brand-700">{job.detail}</p>}
+          {job.checks && (
+            <div className="mt-4 rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+              <div className="flex items-baseline justify-between gap-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-brand-600">Drawings checked</div>
+                <div className="text-xs font-medium tabular-nums text-slate-500">
+                  {job.checks.verified} of {job.checks.drawings} verified
+                </div>
+              </div>
+              <p className="mt-1 text-sm text-slate-700">
+                {job.checks.drawings} drawing{job.checks.drawings === 1 ? "" : "s"} in {job.checks.files} file
+                {job.checks.files === 1 ? "" : "s"}. Each PDF page is counted, then every drawing is opened.
+              </p>
+              <ul className="mt-3 max-h-40 space-y-1.5 overflow-auto">
+                {job.checks.items.map((item, index) => (
+                  <li key={`${item.name}-${index}`} className="flex items-center justify-between gap-3 text-xs">
+                    <span className="min-w-0 truncate font-medium text-slate-800" title={item.name}>
+                      {item.name}
+                    </span>
+                    <span className="shrink-0 tabular-nums text-slate-500">
+                      {item.kind === "pdf" ? "PDF" : "Image"} · {item.pages} page{item.pages === 1 ? "" : "s"}
+                      {item.status === "checking" ? ` · ${item.verified}/${item.pages}` : ""}
+                      {item.status === "ok" ? " · verified" : ""}
+                      {item.status === "partial" ? " · some pages failed" : ""}
+                      {item.status === "unreadable" ? " · could not open" : ""}
+                      {item.status === "skipped" ? " · over the 500 limit" : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <ol className="mt-7 space-y-1">
             {job.stages.map((s, i) => {
               const done = i < stageIndex || job.status === "done";

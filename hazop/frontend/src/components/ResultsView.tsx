@@ -15,7 +15,7 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import { useMemo, useState } from "react";
 import { bandsOf, DEFAULT_MATRIX, evaluate, RiskMatrixContext } from "@/lib/risk";
-import type { Job, RiskCode, Worksheet, WorksheetRow } from "@/lib/types";
+import type { HazopNode, Job, RiskCode, Worksheet, WorksheetRow } from "@/lib/types";
 import DownloadMenu from "./DownloadMenu";
 import PidViewer from "./PidViewer";
 import RecommendationsView from "./RecommendationsView";
@@ -37,6 +37,7 @@ export default function ResultsView({ job, onNew }: { job: Job; onNew: () => voi
   const [tab, setTab] = useState<Tab>("worksheet");
   const [filter, setFilter] = useState<WorksheetFilter>({ risk: [], search: "", cell: null, node: "all" });
   const [focusTag, setFocusTag] = useState<string | null>(null);
+  const [focusPage, setFocusPage] = useState<number | null>(null);
   const [focusRec, setFocusRec] = useState<string | null>(null);
   const [warningsOpen, setWarningsOpen] = useState(true);
   const matrix = ws.risk_matrix ?? DEFAULT_MATRIX;
@@ -49,12 +50,32 @@ export default function ResultsView({ job, onNew }: { job: Job; onNew: () => voi
     return d;
   }, [rows]);
 
-  const updateRow = (n: number, d: number, r: number, patch: Partial<Pick<WorksheetRow, "c" | "l">>) => {
+  const updateRow = (n: number, d: number, r: number, patch: Partial<Pick<WorksheetRow, "cause" | "consequences" | "safeguards" | "cc" | "c" | "l">>) => {
     setWs((prev) => {
       const next = structuredClone(prev);
       const row = next.nodes[n].deviations[d].rows[r];
       Object.assign(row, patch);
-      row.risk = evaluate(row.c, row.l, next.risk_matrix ?? DEFAULT_MATRIX);
+      if (patch.c !== undefined || patch.l !== undefined) {
+        row.risk = evaluate(row.c, row.l, next.risk_matrix ?? DEFAULT_MATRIX);
+      }
+      return next;
+    });
+    setEdited(true);
+  };
+
+  const updateNode = (n: number, patch: Partial<Pick<HazopNode, "title" | "boundary" | "design_intent" | "design_conditions">>) => {
+    setWs((prev) => {
+      const next = structuredClone(prev);
+      Object.assign(next.nodes[n], patch);
+      return next;
+    });
+    setEdited(true);
+  };
+
+  const updateRec = (id: string, text: string) => {
+    setWs((prev) => {
+      const next = structuredClone(prev);
+      next.recommendations[id] = text;
       return next;
     });
     setEdited(true);
@@ -66,7 +87,13 @@ export default function ResultsView({ job, onNew }: { job: Job; onNew: () => voi
   };
 
   const gotoTag = (tag: string) => {
+    setFocusPage(null);
     setFocusTag(tag);
+    setTab("pid");
+  };
+  const gotoSource = (source: NonNullable<WorksheetRow["source"]>) => {
+    setFocusTag(source.tag || null);
+    setFocusPage(source.page);
     setTab("pid");
   };
   const gotoRec = (id: string) => {
@@ -274,10 +301,29 @@ export default function ResultsView({ job, onNew }: { job: Job; onNew: () => voi
             className="mt-2"
           >
             {tab === "worksheet" && (
-              <WorksheetView ws={ws} filter={filter} setFilter={setFilter} onUpdate={updateRow} onTag={gotoTag} onRec={gotoRec} />
+              <WorksheetView
+                ws={ws}
+                filter={filter}
+                setFilter={setFilter}
+                onUpdate={updateRow}
+                onUpdateNode={updateNode}
+                onUpdateRec={updateRec}
+                onTag={gotoTag}
+                onRec={gotoRec}
+                onOpenSource={gotoSource}
+              />
             )}
             {tab === "pid" && (
-              <PidViewer image={result.image} extraction={result.extraction} focusTag={focusTag} onFocusHandled={() => setFocusTag(null)} />
+              <PidViewer
+                image={result.image}
+                extraction={result.extraction}
+                focusTag={focusTag}
+                focusPage={focusPage}
+                onFocusHandled={() => {
+                  setFocusTag(null);
+                  setFocusPage(null);
+                }}
+              />
             )}
             {tab === "recs" && <RecommendationsView ws={ws} focus={focusRec} />}
             {tab === "matrix" && <RiskMatrixView rows={rows} onCell={gotoCell} />}

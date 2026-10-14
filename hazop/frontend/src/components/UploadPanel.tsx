@@ -21,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { checkDocument, type JobOptions, type ProjectDocuments } from "@/lib/api";
 import type { DocumentKind, Health, NodeMode, StudyInfo } from "@/lib/types";
 import { Button, Card } from "./ui";
@@ -42,7 +42,7 @@ const STUDY_FIELDS: { key: keyof StudyInfo; label: string; placeholder: string; 
 ];
 
 const NODE_MODES: { id: NodeMode; icon: typeof Wand2; title: string; desc: string }[] = [
-  { id: "auto", icon: Wand2, title: "Automated", desc: "Nodes are identified from the drawing" },
+  { id: "auto", icon: Wand2, title: "Automated", desc: "Uses Node 1, Node 2… if marked on the sheet, otherwise finds them" },
   { id: "user", icon: ListTree, title: "User-defined", desc: "Review and define the nodes yourself" },
 ];
 
@@ -136,9 +136,9 @@ export default function UploadPanel({
   health: Health | null;
   backendDown: boolean;
   submitting: boolean;
-  onStart: (file: File, docs: ProjectDocuments, opts: JobOptions) => void;
+  onStart: (files: File[], docs: ProjectDocuments, opts: JobOptions) => void;
 }) {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showStudy, setShowStudy] = useState(false);
@@ -153,25 +153,32 @@ export default function UploadPanel({
 
   const providers = useMemo(() => health?.providers ?? [], [health]);
   const maxMb = health?.max_upload_mb ?? 25;
+  const maxSheets = health?.max_pid_pages ?? 500;
   const maxOptional = health?.max_optional_docs ?? 5;
   const aiAvailable = providers.length > 0;
   const activeProvider = provider || providers[0]?.id || "";
 
-  const preview = useMemo(() => (file?.type.startsWith("image/") ? URL.createObjectURL(file) : null), [file]);
-  useEffect(() => () => void (preview && URL.revokeObjectURL(preview)), [preview]);
-
   const tooBig = (f: File) => (f.size > maxMb * 1024 * 1024 ? `"${f.name}" is ${formatSize(f.size)}. The limit is ${maxMb} MB.` : null);
 
-  const pick = (f: File | undefined | null) => {
-    if (!f) return;
-    if (!ACCEPT.includes(extOf(f.name))) {
-      setError(`"${f.name}" is not supported. Upload a PDF or an image (PNG, JPG, TIFF).`);
-      return;
+  const pickMany = (list: FileList | File[] | null | undefined) => {
+    const incoming = Array.from(list ?? []);
+    if (!incoming.length) return;
+    const next = [...files];
+    for (const f of incoming) {
+      if (!ACCEPT.includes(extOf(f.name))) {
+        setError(`"${f.name}" is not supported. Upload a PDF or an image (PNG, JPG, TIFF).`);
+        return;
+      }
+      const big = tooBig(f);
+      if (big) return setError(big);
+      if (next.length >= maxSheets) {
+        setError(`Select at most ${maxSheets} P&ID files. Pages inside a PDF are read on top of that, up to ${maxSheets} sheets.`);
+        return;
+      }
+      if (!next.some((x) => x.name === f.name && x.size === f.size)) next.push(f);
     }
-    const big = tooBig(f);
-    if (big) return setError(big);
     setError(null);
-    setFile(f);
+    setFiles(next);
   };
 
   const pickDoc = async (kind: DocumentKind, f: File) => {
@@ -207,22 +214,22 @@ export default function UploadPanel({
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    pick(e.dataTransfer.files?.[0]);
+    pickMany(e.dataTransfer.files);
   };
 
   const spec = docs["piping-spec"];
   const matrix = docs["risk-matrix"];
   const missing = [
-    !file && "P&ID",
+    files.length === 0 && "P&ID",
     spec?.status !== "ok" && "piping specification",
     matrix?.status !== "ok" && "risk matrix",
   ].filter(Boolean) as string[];
   const ready = missing.length === 0;
 
   const start = () => {
-    if (!file || !spec || !matrix || !ready) return;
+    if (!files.length || !spec || !matrix || !ready) return;
     onStart(
-      file,
+      files,
       { pipingSpec: spec.file, riskMatrix: matrix.file, optional },
       {
         mode,
@@ -238,10 +245,10 @@ export default function UploadPanel({
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold text-slate-900">Start a new study</h2>
-          <p className="text-xs text-slate-500">Upload one P&amp;ID sheet with its piping specification and risk matrix.</p>
+          <p className="text-xs text-slate-500">Upload up to {maxSheets} P&amp;IDs in one run, plus the piping specification and risk matrix.</p>
         </div>
         <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-          ~1-2 min per sheet
+          Up to {maxSheets} P&amp;IDs
         </span>
       </div>
 
@@ -268,50 +275,62 @@ export default function UploadPanel({
           ref={inputRef}
           type="file"
           accept={ACCEPT.join(",")}
+          multiple
           className="hidden"
           onChange={(e) => {
-            pick(e.target.files?.[0]);
+            pickMany(e.target.files);
             e.target.value = "";
           }}
         />
         <AnimatePresence mode="wait" initial={false}>
-          {file ? (
+          {files.length > 0 ? (
             <motion.div
               key="file"
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
-              className="flex w-full items-center gap-4 text-left"
+              className="w-full text-left"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
             >
-              <div className="relative h-16 w-20 shrink-0 overflow-hidden rounded-xl bg-white ring-1 ring-slate-200">
-                {preview ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={preview} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="grid h-full w-full place-items-center bg-gradient-to-br from-rose-50 to-white">
-                    <FileText className="h-7 w-7 text-rose-500" />
-                  </div>
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold text-slate-900">{file.name}</div>
-                <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
-                  {file.type.startsWith("image/") ? <ImageIcon className="h-3.5 w-3.5" /> : <FileText className="h-3.5 w-3.5" />}
-                  {formatSize(file.size)} &middot; P&amp;ID ready
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-slate-900">
+                  {files.length} P&amp;ID{files.length === 1 ? "" : "s"} selected
                 </div>
-                <div className="mt-1 text-[11px] text-brand-600 group-hover:underline">Click to choose another file</div>
+                <button
+                  type="button"
+                  onClick={() => inputRef.current?.click()}
+                  className="text-[11px] font-medium text-brand-600 hover:underline"
+                >
+                  Add more
+                </button>
               </div>
-              <button
-                type="button"
-                aria-label="Remove file"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setFile(null);
-                }}
-                className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-white hover:text-slate-700"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <ul className="max-h-44 space-y-1 overflow-auto">
+                {files.map((f, index) => (
+                  <li
+                    key={`${f.name}-${f.size}-${index}`}
+                    className="flex items-center gap-2 rounded-lg bg-white px-2 py-1.5 ring-1 ring-slate-200"
+                  >
+                    {f.type.startsWith("image/") ? (
+                      <ImageIcon className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    ) : (
+                      <FileText className="h-3.5 w-3.5 shrink-0 text-rose-500" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800" title={f.name}>
+                      {f.name}
+                    </span>
+                    <span className="shrink-0 text-[11px] tabular-nums text-slate-400">{formatSize(f.size)}</span>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${f.name}`}
+                      onClick={() => setFiles((current) => current.filter((_, i) => i !== index))}
+                      className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </motion.div>
           ) : (
             <motion.div key="empty" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}>
@@ -319,10 +338,10 @@ export default function UploadPanel({
                 <CloudUpload className={clsx("h-6 w-6 transition", dragging ? "text-brand-600" : "text-brand-500")} />
               </div>
               <div className="text-sm font-semibold text-slate-800">
-                {dragging ? "Drop your P&ID here" : "Drag & drop your P&ID"}
+                {dragging ? "Drop your P&IDs here" : "Drag & drop one or many P&IDs"}
               </div>
               <div className="mt-1 text-xs text-slate-500">
-                or <span className="font-medium text-brand-600">browse files</span> &middot; PDF, PNG, JPG, TIFF up to {maxMb} MB
+                or <span className="font-medium text-brand-600">browse files</span> &middot; up to {maxSheets} drawings &middot; PDF, PNG, JPG, TIFF up to {maxMb} MB each
               </div>
             </motion.div>
           )}

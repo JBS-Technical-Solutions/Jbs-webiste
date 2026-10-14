@@ -1,0 +1,108 @@
+{
+  "source_files": [
+    "Component Identifier.docx",
+    "Instrument legends.docx",
+    "Line designation.docx",
+    "Piping component legend.docx",
+    "Piping Spec.xlsx",
+    "risk matrixx.JPG"
+  ],
+  "tag_patterns": {
+    "line": "SIZE - SERVICE - SPEC - NUMBER - INSULATION. Example: 6-P-A9A-1001-HC.",
+    "equipment": "First letter is the component type, next two letters the modifier, then the unique number. ABJ 1000 = Atmospheric vessel, Tank, item 1000. C 1000 = Compressor with no modifier.",
+    "safety_device": "ISA letters then an optional device number. PSV = Pressure Safety Valve. PSH2 = Pressure Safety High, device 2. USV is an underwater safety valve; SSV is the wellhead surface safety valve."
+  },
+  "line_graphics": {
+    "pneumatic_signal": "slash marks along the line",
+    "instrument_capillary": "crosses along the line",
+    "instrument_electric_signal": "dashed line",
+    "software_or_data_link": "line with circles",
+    "package_or_battery_limit": "long dashed line",
+    "instrument_supply_or_process_connection": "solid line"
+  },
+  "instrument_bubbles": {
+    "local": "plain circle",
+    "primary_control_system_BPCS": "circle in a square",
+    "secondary_control_system_SIS": "diamond in a square",
+    "interlock": "diamond",
+    "mounting": "no extra mark = remote and accessible to the operator; a horizontal line = field mounted; a dashed horizontal line = remote and inaccessible; a double horizontal line = auxiliary mount accessible; a dashed double line = auxiliary mount inaccessible",
+    "shared_display": "A box with a defined letter is a shared display; a box with a defined number is a shared control"
+  },
+  "instrument_symbols": [
+    "control valve",
+    "pressure safety valve",
+    "restriction orifice",
+    "2-way solenoid valve",
+    "pressure reducing regulator",
+    "motorized needle valve",
+    "needle valve",
+    "diaphragm seal",
+    "three-way valve",
+    "actuated valve",
+    "backpressure regulator",
+    "flashback arrestor",
+    "rotameter",
+    "steam trap",
+    "excess flow valve",
+    "ground",
+    "instrument thermal isolator"
+  ],
+  "piping_components": [
+    "tie-in point",
+    "ball valve normally open",
+    "ball valve normally closed",
+    "gate valve normally open",
+    "gate valve normally closed",
+    "globe valve normally open",
+    "globe valve normally closed",
+    "check valve",
+    "butterfly valve",
+    "needle valve",
+    "reducer",
+    "compensator or flexible hose",
+    "blind flange",
+    "blind cap",
+    "specification break",
+    "expansion joint",
+    "flame arrestor",
+    "flange connection",
+    "welded connection",
+    "welded end",
+    "threaded plug",
+    "PRA valve",
+    "ejector",
+    "union or swaged tubing joint",
+    "pigtail syphon",
+    "specialty item",
+    "sloped line, no pockets",
+    "spectacle blind (closed or open)",
+    "slip blind"
+  ],
+  "risk_matrix": {
+    "file": "risk matrixx.JPG",
+    "size": "6 x 6",
+    "note": "On the sheet, consequence index 1 is Catastrophic and likelihood index 1 is Likely. The engine renumbers so level 6 is the worst consequence and the highest likelihood.",
+    "severity": {
+      "Incidental": "Safety: workforce minor injury such as first aid; public no impact. Health: minor illness or limited effect, treatment not necessary; public no impact. Environment: localised or short-term effect on habitat, species or media.",
+      "Minor": "Safety: one or more minor injuries, not severe; public one or more minor injuries such as first aid. Health: mild to moderate illness, some treatment, medically manageable; public illness with limited or no impact, treatment not necessary. Environment: localised long-term or widespread short-term impact.",
+      "Moderate": "Safety: one or more severe injuries including permanently disabling injuries; public injuries that are not severe. Health: serious illness or severe adverse health effect needing a high level of treatment; public illness or adverse effect with moderate functional impairment. Environment: localised but irreversible habitat loss, or widespread long-term effects.",
+      "Major": "Safety: workforce 1 to 4 fatalities; public one or more severe injuries including permanently disabling injuries. Health: serious illness or chronic exposure with significant life shortening; public serious illness or severe adverse effect needing a high level of treatment. Environment: significant, widespread and persistent change in habitat, species or media.",
+      "Severe": "Safety: workforce multiple fatalities (5 to 50); public multiple fatalities (1 to 10). Health: workforce fatalities (5 to 50) or serious illness or chronic exposure with significant life shortening; public 1 to 10 serious illnesses or chronic exposures with significant life shortening. Environment: persistent reduction in ecosystem function on a landscape scale, or significant disruption of a sensitive species.",
+      "Catastrophic": "Safety: workforce multiple fatalities (more than 50); public multiple fatalities (more than 10). Health: workforce more than 50 fatalities, or serious illness or chronic exposure resulting in fatality or significant life shortening; public more than 10 serious illnesses or chronic exposures resulting in fatality or significant life shortening. Environment: loss of a significant portion of a valued species or of effective ecosystem function on a landscape scale."
+    },
+    "likelihood": {
+      "Likely": "Conditions can reasonably be expected to occur in the life of the facility.",
+      "Occasional": "Conditions may allow the consequences to occur at the facility during its lifetime, or the event has occurred within the Business Unit.",
+      "Seldom": "Exceptional conditions may allow the consequences to occur within the facility lifetime, or the event has occurred within the OPCO.",
+      "Unlikely": "Reasonable to expect the consequences will not occur at this facility. It has occurred several times in the industry, but not in the OPCO.",
+      "Remote": "Has occurred once or twice within the industry.",
+      "Rare": "Rare or unheard of."
+    },
+    "legend": [
+      "Scores 1, 2, 3 and 4: short-term interim risk reduction is required. A long-term risk reduction plan must be developed and implemented.",
+      "Score 5: additional long-term risk reduction is required. If no further action can reasonably be taken, seek SBU management approval to continue the activity.",
+      "Score 6: risk is tolerable if reasonable safeguards and management systems are confirmed in place and consistent with the Risk Mitigation Closure Guidelines.",
+      "Scores 7, 8, 9 and 10: manage the risk. No further risk reduction is required. Risk reduction stays at management or team discretion."
+    ]
+  }
+}

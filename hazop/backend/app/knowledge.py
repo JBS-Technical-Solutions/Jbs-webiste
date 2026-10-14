@@ -109,6 +109,58 @@ def describe_instrument(letters):
     return text[0].upper() + text[1:]
 
 
+@lru_cache
+def company():
+    return _load("company_standards.json")
+
+
+def apply_matrix_definitions(matrix):
+    """Fill empty level descriptions from the company risk matrix when the level names match."""
+    if not matrix:
+        return matrix
+    known = company()["risk_matrix"]
+    for axis, key in (("severity", "severity"), ("likelihood", "likelihood")):
+        table = known[key]
+        levels = matrix.get(axis) or []
+        names = {level.get("name") for level in levels}
+        if len(levels) != len(table) or names != set(table):
+            continue
+        for level in levels:
+            if not level.get("desc"):
+                level["desc"] = table[level["name"]]
+    return matrix
+
+
+def model_brief():
+    """What the company standards say, in the form the AI review reads on every drawing."""
+    c = company()
+    rm = c["risk_matrix"]
+    lines = [
+        "Company standards learned from the project legend files. Use these meanings; do not invent different ones.",
+        "Line number: " + c["tag_patterns"]["line"],
+        "Equipment tag: " + c["tag_patterns"]["equipment"],
+        "Safety device tag: " + c["tag_patterns"]["safety_device"],
+        "Line graphics: " + "; ".join(f"{name.replace('_', ' ')} = {mark}" for name, mark in c["line_graphics"].items()) + ".",
+        "Insulation and tracing codes: " + ", ".join(f"{code} = {name}" for code, name in services()["insulation"].items()) + ".",
+        "Instrument bubbles: " + "; ".join(f"{name.replace('_', ' ')} = {mark}" for name, mark in c["instrument_bubbles"].items()) + ".",
+        "Instrument symbols on the legend: " + ", ".join(c["instrument_symbols"]) + ".",
+        "Piping component symbols: " + ", ".join(c["piping_components"]) + ".",
+        "A normally closed valve is a safeguard only while it stays closed. A specification break means the piping class changes at that point.",
+        f"Risk matrix file '{rm['file']}' ({rm['size']}). {rm['note']}",
+    ]
+    lines += [f"Consequence {name}: {text}" for name, text in rm["severity"].items()]
+    lines += [f"Likelihood {name}: {text}" for name, text in rm["likelihood"].items()]
+    lines += ["Risk-score legend: " + " ".join(rm["legend"])]
+    specs = piping()["specs"]
+    for code, spec in specs.items():
+        lines.append(
+            f"Piping class {code}: {spec['rating']}, {'sour' if spec['sour_service'] else 'non-sour'} service, "
+            f"{spec['material']}, {spec['min_temp_f']} F to {spec['max_temp_f']} F, "
+            f"services {', '.join(spec['services'])}."
+        )
+    return "\n".join(lines)
+
+
 def decode_equipment(prefix):
     """Decode an API RP 14C style equipment prefix, e.g. HAP -> Heat exchanger / Heater."""
     k = api14c()

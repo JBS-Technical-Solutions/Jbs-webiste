@@ -7,6 +7,14 @@ export interface Risk {
   color: string;
 }
 
+export interface RowSource {
+  file: string;
+  page: number;
+  tag: string;
+  verified: boolean;
+  review: string[];
+}
+
 export interface WorksheetRow {
   cause: string;
   consequences: string[];
@@ -17,6 +25,7 @@ export interface WorksheetRow {
   l: number;
   risk: Risk;
   recommendations: string[];
+  source?: RowSource;
 }
 
 export interface Deviation {
@@ -87,6 +96,7 @@ export interface Equipment {
   design: Record<string, number>;
   electric: boolean;
   offpage: boolean;
+  page?: number;
   box: Box;
   boxes?: Box[];
 }
@@ -105,6 +115,7 @@ export interface Instrument {
   voting?: string;
   remark?: string;
   inferred?: boolean;
+  page?: number;
   box: Box;
 }
 
@@ -123,6 +134,7 @@ export interface PipeLine {
   sour: boolean | null;
   material: string | null;
   insulation: string | null;
+  page?: number;
   box: Box;
   boxes?: Box[];
 }
@@ -133,6 +145,7 @@ export interface Valve {
   type: string;
   size: string | null;
   attributes: string[];
+  page?: number;
   box: Box;
 }
 
@@ -142,6 +155,7 @@ export interface Connector {
   description: string;
   line: string | null;
   ref: string | null;
+  page?: number;
   box: Box;
 }
 
@@ -169,7 +183,13 @@ export interface Stats {
 }
 
 export interface JobResult {
-  image: { width: number; height: number; url: string; page_count: number };
+  image: {
+    width: number;
+    height: number;
+    url: string;
+    page_count: number;
+    pages?: { width: number; height: number }[];
+  };
   text_method: string;
   extraction: Extraction;
   worksheet: Worksheet;
@@ -199,12 +219,32 @@ export interface NodeReview {
   proposed_nodes: NodePlan[];
 }
 
+export interface DrawingCheck {
+  name: string;
+  kind: "pdf" | "image";
+  pages: number;
+  verified: number;
+  failed: number;
+  status: "ready" | "checking" | "ok" | "partial" | "unreadable" | "skipped";
+  problem?: string;
+}
+
+export interface DrawingChecks {
+  files: number;
+  drawings: number;
+  checked: number;
+  verified: number;
+  items: DrawingCheck[];
+}
+
 export interface Job {
   id: string;
   filename: string;
   status: "queued" | "running" | "review" | "done" | "error";
   stage: string;
   progress: number;
+  detail?: string | null;
+  checks?: DrawingChecks;
   error: string | null;
   warnings: string[];
   stages: Stage[];
@@ -238,6 +278,7 @@ export interface Health {
   status: string;
   providers: Provider[];
   max_upload_mb: number;
+  max_pid_pages?: number;
   formats: string[];
   optional_formats?: string[];
   max_optional_docs?: number;

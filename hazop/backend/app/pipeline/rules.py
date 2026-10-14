@@ -6,13 +6,27 @@ Utility failure, Maintenance). Safeguards are taken from the instruments and val
 actually found on the drawing and design limits come from the piping-spec knowledge base.
 """
 
+import copy
+import re
 from collections import Counter
 
 from .. import knowledge as kb
 from .. import risk
 from ..risk import evaluate
+from .parse import Tok, _text_lines
 
 DEG = "\u00b0F"
+# How far around a part's own tags another tag still belongs to that part (fraction of the page).
+PART_RADIUS = 0.16
+# Not part of the steady-state process node: drains, vents, blowdown and lines to safety valves.
+OFF_PROCESS_SERVICES = {"DW", "DH", "VG", "SV", "FL", "BD"}
+
+
+def _off_process_line(line):
+    service = str(line.get("service") or "").upper()
+    name = str(line.get("service_name") or "").lower()
+    return service in OFF_PROCESS_SERVICES or any(
+        word in name for word in ("drain", "vent", "flare", "blowdown", "blow down", "safety valve"))
 
 
 class Recs:
@@ -38,8 +52,9 @@ class Ctx:
         self.connectors = ext["connectors"]
         self.recs = Recs()
 
-        self.flare_lines = [l for l in self.lines if l["service"] in ("FL", "SV", "BD", "VG")]
-        self.process_lines = [l for l in self.lines if l not in self.flare_lines]
+        self.off_process_lines = [l for l in self.lines if _off_process_line(l)]
+        self.flare_lines = [l for l in self.off_process_lines if str(l.get("service") or "").upper() in ("FL", "SV", "BD", "VG")]
+        self.process_lines = [l for l in self.lines if l not in self.off_process_lines]
         svc = Counter(l["service"] for l in self.process_lines)
         self.fluid = kb.service_name(svc.most_common(1)[0][0]).lower() if svc else "process fluid"
         info = kb.services()["codes"]
@@ -50,15 +65,16 @@ class Ctx:
         self.proc_spec = max(rated, key=lambda l: l["rating_psig"]) if rated else None
         frated = [l for l in self.flare_lines if l.get("rating_psig")]
         self.flare_spec = frated[0] if frated else None
-        flare_tags = {l["tag"] for l in self.flare_lines}
+        off_tags = {l["tag"] for l in self.off_process_lines}
 
-        def is_flare(c):
-            return c["line"] in flare_tags or any(w in c["description"].upper() for w in ("FLARE", "VENT"))
+        def is_off_process(c):
+            text = (c.get("description") or "").upper()
+            return c.get("line") in off_tags or any(w in text for w in ("FLARE", "VENT", "DRAIN", "BLOWDOWN", "BLOW DOWN"))
 
-        self.sources = [c for c in self.connectors if c["direction"] == "source" and not is_flare(c)]
-        self.dests = [c for c in self.connectors if c["direction"] == "destination" and not is_flare(c)]
-        self.flare_dests = [c for c in self.connectors if c["direction"] == "destination" and is_flare(c)]
-        self.flare_sources = [c for c in self.connectors if c["direction"] == "source" and is_flare(c)]
+        self.sources = [c for c in self.connectors if c["direction"] == "source" and not is_off_process(c)]
+        self.dests = [c for c in self.connectors if c["direction"] == "destination" and not is_off_process(c)]
+        self.flare_dests = [c for c in self.connectors if c["direction"] == "destination" and is_off_process(c)]
+        self.flare_sources = [c for c in self.connectors if c["direction"] == "source" and is_off_process(c)]
         self.release = ("high-pressure sour (H2S) flammable gas" if self.sour and self.gas else
                         "flammable hydrocarbon" if self.hydrocarbon else self.fluid)
 
@@ -90,15 +106,28 @@ class Ctx:
                 seen.append(i["code"])
         return ", ".join(seen)
 
+    def node_start(self):
+        """Where this node is read from: the inlet connector, or the equipment the process line leaves."""
+        if self.sources:
+            text = re.sub(r"(?i)^from\s+", "", self.src_text())
+            return f"the inlet connector ({text})"
+        mains = [e for e in self.equipment if not e.get("offpage") and e.get("kind") not in ("panel", "package") and e.get("box")]
+        if mains:
+            first = min(mains, key=lambda e: (e["box"][0] + e["box"][2]) / 2)
+            return f"{first['tag']}, where the process line originates"
+        return "the process equipment"
+
     def src_text(self):
         if not self.sources:
             return "upstream supply"
-        return " and ".join(f"{c['description']}" + (f" ({c['line']})" if c["line"] else "") for c in self.sources)
+        return " and ".join(
+            re.sub(r"(?i)^from\s+", "", c["description"]) + (f" ({c['line']})" if c["line"] else "") for c in self.sources)
 
     def dest_text(self):
         if not self.dests:
             return "downstream users"
-        return " and ".join(f"{c['description']}" + (f" ({c['line']})" if c["line"] else "") for c in self.dests)
+        return " and ".join(
+            re.sub(r"(?i)^to\s+", "", c["description"]) + (f" ({c['line']})" if c["line"] else "") for c in self.dests)
 
     def dest_equipment(self):
         offpage = [e for e in self.equipment if e["offpage"]]
@@ -106,6 +135,18 @@ class Ctx:
 
 
 # ------------------------------------------------------------- safeguard helpers
+
+def _boundary(ctx, tag, stop_at=None, extra=""):
+    """Node description starts at the inlet, or at the equipment the process line leaves."""
+    start = ctx.node_start()
+    own = start == tag or start.startswith(tag + ",") or start.startswith(tag + " ")
+    head = f"From {start}" if own else f"From {start} through {tag}"
+    if extra:
+        head += extra
+    if stop_at:
+        return head + f", up to {stop_at}."
+    return head + f", to {ctx.dest_text()}."
+
 
 def sg(text, tag, strong=False):
     return {"text": text, "tag": tag, "strong": strong}
@@ -184,7 +225,7 @@ def shutdown_alarms(ctx):
 # -------------------------------------------------------------------- row helper
 
 def row(cause, consequences, cc, safeguards, c, base_l, recs=()):
-    """C and L are given on a 5-level basis and mapped onto the active project risk matrix."""
+    """C and L are this scenario's intents, placed on the levels of the uploaded risk-matrix file."""
     strong = any(s["strong"] for s in safeguards)
     c, l = risk.from_basis(c, max(1, base_l - (1 if strong else 0)))
     safeguards = safeguards[:5]
@@ -433,7 +474,7 @@ def equipment_node(ctx, eq, nid):
     return {
         "id": str(nid),
         "title": f"{tag} {desc}".strip(),
-        "boundary": f"From {ctx.src_text()} through {tag}" + (f" up to {cv}." if cv else f" to {ctx.dest_text()}."),
+        "boundary": _boundary(ctx, tag, cv),
         "design_intent": intent,
         "design_conditions": "; ".join(design) or "Not shown on the P&ID.",
         "deviations": [x for x in devs if x],
@@ -539,8 +580,7 @@ def control_valve_node(ctx, cvs, nid, heater):
     return {
         "id": str(nid),
         "title": f"{var.capitalize()} control valve {tag} and outlet to {ctx.dest_text()}",
-        "boundary": f"From the upstream isolation valve of {tag}, through {tag}" + (f" (with bypass {ctx.names(bypass[:1])})" if bypass else "")
-                    + f", to {dest}.",
+        "boundary": _boundary(ctx, tag, extra=(f" (with bypass {ctx.names(bypass[:1])})" if bypass else "")),
         "design_intent": f"Control {var} using {tag}" + (f" ({ctx.tags(pic)})" if pic else "")
                          + (f", fail {'closed' if fail == 'FC' else 'open'}" if fail in ("FC", "FO") else "")
                          + f", and deliver {ctx.fluid} to {dest}.",
@@ -642,6 +682,97 @@ def _main_equipment(ext):
     return [e for e in ext["equipment"] if not e["offpage"] and e["kind"] not in ("panel", "package")]
 
 
+_NODE_HEADER = re.compile(r"^(?:HAZOP\s+)?NODE(?:\s*(?:NO\.?|NUMBER))?\s*[-:#]?\s*(\d{1,3})\b\s*(.*)$")
+_NODE_SKIP = re.compile(r"^(REFER|SEE|FROM|TO|CONT|CONTINUED|NOTE|DWG)\b")
+
+
+def _marked_nodes(ext):
+    """Nodes already written on the sheet, e.g. a 'NODE 1' mark and the tags listed with it.
+
+    Returns a plan (title, tags) or None when the drawing has no node marks.
+    """
+    raw = ext.get("tokens") or []
+    if not raw:
+        return None
+    scale = 10000
+    toks = [Tok({"text": t.get("text") or "", "box": [c * scale for c in t["box"]], "score": 1})
+            for t in raw if t.get("text") and t.get("box")]
+    lines = _text_lines(toks)
+    headers = []
+    for ln in lines:
+        text = ln["text"].strip()
+        if len(text) > 80 or _NODE_SKIP.match(text):
+            continue
+        m = _NODE_HEADER.match(text)
+        if m:
+            headers.append({"number": int(m.group(1)), "rest": m.group(2).strip(" -:."), "box": ln["box"], "text": text})
+    if not headers:
+        return None
+    headers.sort(key=lambda h: (h["box"][1], h["box"][0]))
+
+    known = []
+    for key, tag_key in (("equipment", "tag"), ("instruments", "tag"), ("lines", "tag"), ("valves", "code")):
+        for ent in ext.get(key) or []:
+            tag = str(ent.get(tag_key) or "").upper()
+            box = ent.get("box")
+            if tag and box:
+                known.append((tag, ((box[0] + box[2]) / 2 * scale, (box[1] + box[3]) / 2 * scale), ent))
+
+    def mentioned(blob):
+        found = []
+        for tag, _, _ in known:
+            if re.search(rf"(?<![A-Z0-9]){re.escape(tag)}(?![A-Z0-9])", blob) and tag not in found:
+                found.append(tag)
+        return found
+
+    def nearest(box):
+        cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        ranked = []
+        for tag, (x, y), ent in known:
+            if ent.get("offpage") or ent.get("kind") in ("panel", "package"):
+                continue
+            if "kind" not in ent:
+                continue
+            dist = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
+            if dist <= 0.28 * scale:
+                ranked.append((dist, tag))
+        ranked.sort()
+        out = []
+        for _, tag in ranked:
+            if tag not in out:
+                out.append(tag)
+            if len(out) == 3:
+                break
+        return out
+
+    by_number = {}
+    for i, h in enumerate(headers):
+        y0 = h["box"][1]
+        below = [o for o in headers[i + 1:] if o["box"][1] > y0 + 10]
+        y1 = below[0]["box"][1] if below else y0 + 0.18 * scale
+        block = [ln["text"] for ln in lines
+                 if y0 - 20 <= ln["box"][1] < y1 and abs(ln["box"][0] - h["box"][0]) < 0.2 * scale]
+        tags = mentioned(" ".join(block)) or nearest(h["box"])
+        slot = by_number.setdefault(h["number"], {"rest": h["rest"], "tags": []})
+        if h["rest"] and not slot["rest"]:
+            slot["rest"] = h["rest"]
+        for tag in tags:
+            if tag not in slot["tags"]:
+                slot["tags"].append(tag)
+
+    plan = []
+    for number in sorted(by_number):
+        slot = by_number[number]
+        if not slot["tags"]:
+            continue
+        title = f"Node {number}"
+        rest = slot["rest"]
+        if rest and not re.fullmatch(r"[\d\s]+", rest):
+            title = f"{title} - {rest}"
+        plan.append({"title": title, "tags": slot["tags"], "design_intent": ""})
+    return plan or None
+
+
 def _auto_plan(ctx, ext):
     """Default nodes: each major equipment item, the control valve / letdown, and relief to flare."""
     plan = [[e["tag"]] for e in _main_equipment(ext)]
@@ -710,7 +841,7 @@ def plan_nodes(ext):
     """Proposed nodes for the user to review: title, the tags that anchor each node and its generated intent."""
     ctx = Ctx(ext)
     out = []
-    for i, entry in enumerate(_auto_plan(ctx, ext), 1):
+    for i, entry in enumerate(_marked_nodes(ext) or _auto_plan(ctx, ext), 1):
         node = _build(ctx, ext, entry, i)
         out.append({"title": node["title"], "tags": entry["tags"], "design_intent": "",
                     "auto_intent": node["design_intent"]})
@@ -719,10 +850,81 @@ def plan_nodes(ext):
 
 # ------------------------------------------------------------------------ main
 
-def generate(ext, study=None, user_nodes=None):
+def _center(box):
+    return (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+
+
+def _scope_extraction(ext, tags):
+    """Keep the tags of one part, plus whatever sits next to them on the drawing."""
+    wanted = {str(t).strip().upper() for t in tags if t and str(t).strip()}
+    groups = ("equipment", "instruments", "lines", "valves", "connectors", "spec_breaks")
+
+    def ident(ent):
+        return str(ent.get("tag") or ent.get("code") or "").upper()
+
+    seeds = [ent["box"] for key in groups for ent in ext.get(key) or [] if ident(ent) in wanted and ent.get("box")]
+    if not seeds:
+        return ext
+
+    def close(box):
+        if not box:
+            return False
+        cx, cy = _center(box)
+        return any((cx - sx) ** 2 + (cy - sy) ** 2 <= PART_RADIUS ** 2 for sx, sy in (_center(s) for s in seeds))
+
+    scoped = copy.deepcopy({k: ext.get(k) for k in ("flags", "token_count")})
+    for key in groups:
+        scoped[key] = [ent for ent in ext.get(key) or [] if ident(ent) in wanted or close(ent.get("box"))]
+    kept_lines = {str(ln.get("tag") or "").upper() for ln in scoped["lines"]}
+    scoped["connectors"] = [
+        c for c in ext.get("connectors") or []
+        if ident(c) in wanted or close(c.get("box")) or str(c.get("line") or "").upper() in kept_lines
+    ]
+    scoped["tokens"] = [t for t in ext.get("tokens") or [] if close(t.get("box"))]
+    scoped["token_count"] = len(scoped["tokens"])
+    scoped["flags"] = {
+        "sour_service": any(ln.get("sour") for ln in scoped["lines"]),
+        "car_sealed": any("CSO" in (v.get("attributes") or []) for v in scoped["valves"]),
+        "interlocks": sum(1 for t in scoped["tokens"] if str(t.get("text") or "").strip() == "I"),
+    }
+    return scoped
+
+
+def _compile_parts(pieces, source):
+    """Renumber the worksheet of each part into one worksheet."""
+    nodes, recs = [], {}
+    next_r = 1
+    assumptions = []
+    for result in pieces:
+        mapping = {}
+        for old, text in (result.get("recommendations") or {}).items():
+            new = f"R-{next_r:02d}"
+            next_r += 1
+            mapping[old] = new
+            recs[new] = text
+        for node in result.get("nodes") or []:
+            node = copy.deepcopy(node)
+            nid = len(nodes) + 1
+            node["id"] = nid
+            for i, dev in enumerate(node.get("deviations") or [], 1):
+                name = re.sub(r"^\s*\d+(?:\.\d+)*\s*", "", str(dev.get("deviation") or "Deviation"))
+                dev["deviation"] = f"{nid}.{i} {name}"
+                for row in dev.get("rows") or []:
+                    row["recommendations"] = [mapping[x] for x in row.get("recommendations") or [] if x in mapping]
+            nodes.append(node)
+        for note in result.get("assumptions") or []:
+            if note not in assumptions:
+                assumptions.append(note)
+    study = dict((pieces[0].get("study") or {}) if pieces else {})
+    note = (f"The drawing was split into {len(pieces)} parts. Each part was studied on its own, "
+            "then the parts were compiled into this worksheet.")
+    return {"study": study, "nodes": nodes, "recommendations": recs, "assumptions": [note, *assumptions],
+            "node_source": source}
+
+
+def _worksheet(ext, study, plan, source):
     ctx = Ctx(ext)
     main_eq = _main_equipment(ext)
-    plan = user_nodes if user_nodes else _auto_plan(ctx, ext)
     nodes = [_build(ctx, ext, entry, i) for i, entry in enumerate(plan, 1)]
 
     for n in nodes:
@@ -734,21 +936,22 @@ def generate(ext, study=None, user_nodes=None):
         f"{package['tag']} {package['description']}".strip() if package else "",
         f"{main_eq[0]['tag']} {main_eq[0]['description']}".strip() if main_eq else ""] if x)
 
-    matrix = risk.current()
+    matrix = risk.project_matrix()
     nc, nl = risk.size(matrix)
-    if matrix.get("source"):
-        ranking = f"C and L are ranked with existing safeguards in place using the project risk matrix ({nc} x {nl}, {matrix['source']})."
-        if (nc, nl) != (5, 5):
-            ranking += " Rule-engine rankings are mapped onto this matrix from a 5-level basis and should be confirmed by the team."
-    else:
-        ranking = "C and L are ranked with existing safeguards in place using the generic 5 x 5 risk matrix."
+    ranking = (
+        f"C and L are the levels in the uploaded risk matrix '{matrix['source']}' ({nc} x {nl}). "
+        "The risk ranking of each cause is the cell of that file, with existing safeguards in place."
+    )
     assumptions = [
         "Worksheet generated automatically by the rule-based engine from text recognised on the P&ID; review by a HAZOP team is required.",
         ranking,
         "CC (Consequence Category): S = Safety / People, E = Environment, A = Asset / Production.",
+        "Drain lines, vent lines and lines to safety valves are left out of the node description. They are not part of steady-state continuous operation.",
     ]
-    if user_nodes:
+    if source == "user":
         assumptions.append("HAZOP nodes and their boundaries were defined by the user before the worksheet was generated.")
+    elif source == "drawing":
+        assumptions.append("HAZOP nodes were taken from the node numbers already marked on this sheet.")
     offpage = [e["tag"] for e in ext["equipment"] if e["offpage"]]
     if offpage:
         assumptions.append(f"Design data for off-page equipment ({', '.join(offpage)}) is not shown on this drawing.")
@@ -766,4 +969,23 @@ def generate(ext, study=None, user_nodes=None):
         "nodes": nodes,
         "recommendations": ctx.recs.items,
         "assumptions": assumptions,
+        "node_source": source,
     }
+
+
+def generate(ext, study=None, user_nodes=None, on_part=None):
+    """Split the drawing into parts, study each part on its own, then compile one worksheet.
+
+    on_part(index, count, entry) is called before each part when there is more than one.
+    """
+    marked = None if user_nodes else _marked_nodes(ext)
+    plan = user_nodes if user_nodes else (marked or _auto_plan(Ctx(ext), ext))
+    source = "user" if user_nodes else ("drawing" if marked else "auto")
+    if len(plan) <= 1:
+        return _worksheet(ext, study, plan, source)
+    pieces = []
+    for i, entry in enumerate(plan, 1):
+        if on_part:
+            on_part(i, len(plan), entry)
+        pieces.append(_worksheet(_scope_extraction(ext, entry.get("tags") or []), study, [entry], source))
+    return _compile_parts(pieces, source)
