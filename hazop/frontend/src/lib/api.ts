@@ -53,13 +53,14 @@ export interface ProjectDocuments {
   optional: File[];
 }
 
-export async function createJob(file: File, docs: ProjectDocuments, opts: JobOptions): Promise<Job> {
+export async function createJob(files: File[], docs: ProjectDocuments, opts: JobOptions): Promise<Job> {
   const form = new FormData();
   form.set("mode", opts.mode);
   form.set("provider", opts.provider ?? "");
   form.set("node_mode", opts.nodeMode);
   form.set("study", JSON.stringify(opts.study));
-  form.set("file", file);
+  form.set("file", files[0]);
+  files.slice(1).forEach((f) => form.append("drawings", f));
   form.set("piping_spec", docs.pipingSpec);
   form.set("risk_matrix", docs.riskMatrix);
   docs.optional.forEach((f) => form.append("optional_docs", f));

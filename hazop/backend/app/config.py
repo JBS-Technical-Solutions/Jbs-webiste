@@ -18,6 +18,7 @@ for d in (JOBS_DIR, CACHE_DIR):
 
 RENDER_DPI = int(os.getenv("RENDER_DPI", "300"))
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "25"))
+MAX_PID_PAGES = int(os.getenv("MAX_PID_PAGES", "500"))
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
 
 # Limits for a public deployment (0 = off). Rates are per client address; TRUST_PROXY=1 reads it from

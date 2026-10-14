@@ -55,7 +55,7 @@ export default function Home({
   health: Health | null;
   backendDown: boolean;
   onRetryHealth: () => void;
-  onStart: (file: File, docs: ProjectDocuments, opts: JobOptions) => void;
+  onStart: (files: File[], docs: ProjectDocuments, opts: JobOptions) => void;
   submitting: boolean;
   lastJob: string | null;
   onOpenLast: () => void;

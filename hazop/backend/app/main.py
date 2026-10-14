@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from . import documents, jobs, limits, risk, signup
-from .config import (ADMIN_KEY, BACKEND_DIR, CORS_ORIGINS, MAX_UPLOAD_MB, SIGNUP_REQUIRED, SIGNUP_VERIFY_EMAIL,
+from .config import (ADMIN_KEY, BACKEND_DIR, CORS_ORIGINS, MAX_PID_PAGES, MAX_UPLOAD_MB, SIGNUP_REQUIRED, SIGNUP_VERIFY_EMAIL,
                      available_ai_providers)
 from .exporters import build_docx, build_xlsx
 from .pipeline.render import SUPPORTED
@@ -145,6 +145,7 @@ def _describe(kind, name, parsed):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "providers": available_ai_providers(), "max_upload_mb": MAX_UPLOAD_MB,
+            "max_pid_pages": MAX_PID_PAGES,
             "formats": sorted(SUPPORTED), "optional_formats": sorted(documents.OPTIONAL_EXT),
             "max_optional_docs": documents.MAX_OPTIONAL_DOCS, "signup_required": SIGNUP_REQUIRED,
             "signup_verify": SIGNUP_VERIFY_EMAIL, "samples": [p.name for p in SAMPLES_DIR.glob("*") if p.is_file()]}
@@ -229,7 +230,8 @@ async def check_document(request: Request, kind: str, file: UploadFile = File(..
 @app.post("/api/jobs")
 async def create_job(
     request: Request,
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(None),
+    drawings: list[UploadFile] | None = File(None),
     piping_spec: UploadFile = File(...),
     risk_matrix: UploadFile = File(...),
     optional_docs: list[UploadFile] | None = File(None),
@@ -243,7 +245,13 @@ async def create_job(
     options = _options(mode, provider, page, study, node_mode)
     limits.check_queue(jobs.active())
     limits.check_rate(request, "jobs")
-    name, data = await _read(file, "P&ID", SUPPORTED)
+    uploads = [u for u in [file, *(drawings or [])] if u is not None and u.filename]
+    if not uploads:
+        raise HTTPException(400, "Upload at least one P&ID.")
+    if len(uploads) > MAX_PID_PAGES:
+        raise HTTPException(400, f"Upload at most {MAX_PID_PAGES} P&ID files in one run.")
+    name, data = await _read(uploads[0], "P&ID", SUPPORTED)
+    more = [await _read(u, "P&ID", SUPPORTED) for u in uploads[1:]]
     spec_name, spec_data = await _read(piping_spec, "piping specification", documents.PROJECT_DOC_EXT)
     matrix_name, matrix_data = await _read(risk_matrix, "risk matrix", documents.PROJECT_DOC_EXT)
     optional = [o for o in optional_docs or [] if o.filename]
@@ -260,7 +268,7 @@ async def create_job(
     }
     if options["mode"] == "ai":
         limits.check_ai_budget()
-    return jobs.create(data, name, options, project)
+    return jobs.create(data, name, options, project, more)
 
 
 @app.post("/api/jobs/sample")
