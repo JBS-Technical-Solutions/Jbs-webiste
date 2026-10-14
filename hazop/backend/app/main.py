@@ -274,7 +274,7 @@ async def create_job(
 @app.post("/api/jobs/sample")
 def create_sample_job(request: Request, name: str = Form(""), mode: str = Form("rules"), provider: str = Form(""),
                       study: str = Form(""), node_mode: str = Form("auto")):
-    """Analyse a bundled sample drawing with the built-in piping specs and the default 5 x 5 matrix."""
+    """Analyse a bundled sample drawing with the built-in piping specs and the template risk matrix."""
     samples = sorted(p for p in SAMPLES_DIR.glob("*") if p.is_file())
     sample = next((p for p in samples if p.name == name), samples[0] if samples else None)
     if not sample:
@@ -285,7 +285,12 @@ def create_sample_job(request: Request, name: str = Form(""), mode: str = Form("
     limits.check_rate(request, "jobs")
     if options["mode"] == "ai":
         limits.check_ai_budget()
-    return jobs.create(sample.read_bytes(), sample.name, options)
+    matrix_name = "HAZOP Studio risk matrix template.xlsx"
+    matrix_data = documents.risk_matrix_template()
+    matrix = documents.parse_risk_matrix(matrix_data, matrix_name)
+    options["documents"] = {"risk_matrix": matrix_name, "optional": []}
+    return jobs.create(sample.read_bytes(), sample.name, options,
+                       {"matrix": matrix, "risk_matrix": (matrix_name, matrix_data)})
 
 
 @app.get("/api/jobs/{job_id}")

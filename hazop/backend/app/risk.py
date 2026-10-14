@@ -146,14 +146,88 @@ def worse(a, b):
     return b if (rank(b["code"]), b["score"]) > (rank(a["code"]), a["score"]) else a
 
 
+class MatrixRequired(RuntimeError):
+    pass
+
+
+def project_matrix():
+    """The uploaded risk-matrix file. Analysis does not rank on the built-in 5 x 5."""
+    m = current()
+    if not m.get("source"):
+        raise MatrixRequired("Upload the project risk matrix. Every cause is ranked on that file.")
+    return m
+
+
+# The rule engine speaks in five intents. The uploaded file decides which of its own levels that intent is.
+_SEVERITY_INTENT = (
+    ("minor", "negligible", "first aid", "slight", "insignificant"),
+    ("moderate", "medical treatment", "restricted work", "minor release"),
+    ("serious", "lost time", "contained release", "significant"),
+    ("major", "single fatality", "permanent disability", "severe"),
+    ("catastrophic", "multiple fatalities", "disaster", "extreme"),
+)
+_LIKELIHOOD_INTENT = (
+    ("remote", "rare", "incredible", "highly unlikely"),
+    ("unlikely", "seldom"),
+    ("possible", "occasional", "credible"),
+    ("likely", "probable"),
+    ("frequent", "almost certain", "expected"),
+)
+
+
+def _hits(text, intents):
+    text = " " + re.sub(r"[^a-z0-9]+", " ", text.lower()) + " "
+    text = text.replace(" not expected ", " ")
+    best = None
+    for i, words in enumerate(intents):
+        for word in words:
+            if f" {word} " in text and (best is None or len(word) > best[0]):
+                best = (len(word), i)
+    return None if best is None else best[1]
+
+
+def _anchors(levels, intents):
+    """intent index -> that file's level number. One level is kept when several share an intent."""
+    n = len(levels)
+    buckets = {}
+    for lv in levels:
+        hit = _hits(f"{lv.get('name', '')} {lv.get('desc', '')}", intents)
+        if hit is not None:
+            buckets.setdefault(hit, []).append(lv["level"])
+    anchors = {}
+    for intent, nums in buckets.items():
+        ideal = 1 + intent * (n - 1) / 4
+        anchors[intent] = min(nums, key=lambda x: (abs(x - ideal), x))
+    return anchors
+
+
 def _scale(v, n):
     return max(1, min(n, int((int(v) - 1) * (n - 1) / 4 + 1.5)))
 
 
+def _on_axis(v, levels, intents):
+    """Place a 1..5 intent on this file's axis, using the level names in the file."""
+    n = len(levels)
+    v = max(1, min(5, int(v)))
+    anchors = _anchors(levels, intents)
+    i = v - 1
+    if i in anchors:
+        return anchors[i]
+    lower = max((k for k in anchors if k < i), default=None)
+    upper = min((k for k in anchors if k > i), default=None)
+    if lower is not None and upper is not None and upper != lower:
+        frac = (i - lower) / (upper - lower)
+        return max(1, min(n, round(anchors[lower] + frac * (anchors[upper] - anchors[lower]))))
+    if anchors:
+        nearest = min(anchors, key=lambda k: (abs(k - i), k))
+        return max(1, min(n, anchors[nearest] + (i - nearest)))
+    return _scale(v, n)
+
+
 def from_basis(c, l, m=None):
-    """Map C and L ranked on the rule engine's 5-level basis onto the active matrix size."""
-    nc, nl = size(m)
-    return _scale(c, nc), _scale(l, nl)
+    """Place the rule engine's consequence and likelihood intents on the uploaded matrix."""
+    m = m or current()
+    return _on_axis(c, m["severity"], _SEVERITY_INTENT), _on_axis(l, m["likelihood"], _LIKELIHOOD_INTENT)
 
 
 def matrix():
