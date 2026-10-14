@@ -690,6 +690,19 @@ def _score_grid(ws, filename):
         s, l = (col_level[c], row_level[r]) if rows_are_likelihood else (row_level[r], col_level[c])
         cells[s - 1][l - 1] = code
 
+    scores, higher = None, True
+    if all(isinstance(v, int) for v in vals.values()):
+        scores = [[None] * nl for _ in range(nc)]
+        for (r, c), value in vals.items():
+            s, lv = (col_level[c], row_level[r]) if rows_are_likelihood else (row_level[r], col_level[c])
+            scores[s - 1][lv - 1] = value
+        by_code = {}
+        for rc, value in vals.items():
+            by_code.setdefault(codes[rc], []).append(value)
+        ordered = [code for code in risk.BAND_ORDER if code in by_code]
+        if len(ordered) >= 2:
+            higher = float(np.mean(by_code[ordered[-1]])) > float(np.mean(by_code[ordered[0]]))
+
     used = sorted(set(codes.values()), key=risk.BAND_ORDER.index)
 
     def band_color(code):
@@ -710,6 +723,8 @@ def _score_grid(ws, filename):
         "likelihood": [level(it, generic_lik) for it in lik_axis],
         "bands": [{"code": code, "name": risk.BAND_DEFAULTS[code]["name"], "color": band_color(code)} for code in used],
         "cells": cells,
+        "scores": scores,
+        "score_higher_is_worse": higher,
     })
 
 

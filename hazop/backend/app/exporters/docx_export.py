@@ -254,7 +254,8 @@ def build_docx(result):
 
     m = risk.current()
     severity, likelihood = m["severity"], m["likelihood"]
-    b.heading(f"Risk Matrix (Risk = C x L) - {m['name']}" + (f", {m['source']}" if m.get("source") else ""), size=12)
+    heading = "Risk matrix" if m.get("scores") else "Risk Matrix (Risk = C x L)"
+    b.heading(f"{heading} - {m['name']}" + (f", {m['source']}" if m.get("source") else ""), size=12)
     matrix_rows, matrix_fills = [], {}
     for r, sev in enumerate(reversed(severity)):
         row = [f"C{sev['level']} - {sev['name']}"]

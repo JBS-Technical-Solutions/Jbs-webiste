@@ -24,7 +24,8 @@ export default function RecommendationsView({ ws, focus }: { ws: Worksheet; focu
             const cur = m.get(id) ?? { refs: [], score: 0, code: null, nodes: new Set<number>() };
             const ref = d.deviation.split(" ")[0];
             if (!cur.refs.includes(ref)) cur.refs.push(ref);
-            if (rank(r.risk.code) > rank(cur.code) || (r.risk.code === cur.code && r.risk.score > cur.score)) {
+            const dir = r.risk.higher_is_worse === false ? -1 : 1;
+            if (rank(r.risk.code) > rank(cur.code) || (r.risk.code === cur.code && dir * r.risk.score > dir * cur.score)) {
               cur.score = r.risk.score;
               cur.code = r.risk.code;
             }

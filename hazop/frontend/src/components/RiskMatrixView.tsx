@@ -18,7 +18,7 @@ export default function RiskMatrixView({ rows, onCell }: { rows: WorksheetRow[];
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <SectionTitle
           icon={<Grid3x3 className="h-4 w-4" />}
-          title={`Risk matrix ${severity.length} × ${likelihood.length} (Risk = C × L)`}
+          title={`Risk matrix ${severity.length} × ${likelihood.length}${matrix.scores ? "" : " (Risk = C × L)"}`}
           subtitle={`${matrix.source ? `From ${matrix.source} · ` : ""}Number of worksheet causes in each cell — click a cell to see those rows`}
         />
         <div className="mt-6 flex gap-3">
@@ -51,7 +51,7 @@ export default function RiskMatrixView({ rows, onCell }: { rows: WorksheetRow[];
                           n ? "cursor-pointer hover:shadow-lg" : "cursor-default",
                         )}
                         style={{ background: b.color, boxShadow: `inset 0 0 0 1px ${b.ring}`, color: b.text }}
-                        title={`C${s.level} × L${l.level} = ${risk.score} (${risk.name})`}
+                        title={matrix.scores ? `C${s.level}, L${l.level}: risk ${risk.score} (${risk.name})` : `C${s.level} × L${l.level} = ${risk.score} (${risk.name})`}
                       >
                         <span className="absolute left-2 top-1.5 text-[10px] font-semibold opacity-60">{risk.score}</span>
                         {n > 0 ? (

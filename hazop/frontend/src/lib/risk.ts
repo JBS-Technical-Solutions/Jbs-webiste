@@ -72,7 +72,15 @@ export function evaluate(c: number, l: number, m: RiskMatrix = DEFAULT_MATRIX): 
   const cc = Math.max(1, Math.min(m.severity.length, c));
   const ll = Math.max(1, Math.min(m.likelihood.length, l));
   const b = bandFor(m.cells[cc - 1][ll - 1], m);
-  return { score: cc * ll, code: b.code, name: b.name, color: b.color };
+  const fromCell = m.scores?.[cc - 1]?.[ll - 1];
+  const score = typeof fromCell === "number" ? fromCell : cc * ll;
+  return {
+    score,
+    code: b.code,
+    name: b.name,
+    color: b.color,
+    higher_is_worse: typeof fromCell === "number" ? m.score_higher_is_worse !== false : true,
+  };
 }
 
 export const CC_LABEL: Record<string, string> = { S: "Safety", E: "Environment", A: "Asset" };

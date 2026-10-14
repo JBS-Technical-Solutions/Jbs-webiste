@@ -93,6 +93,7 @@ def validate(m):
         if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
             color = BAND_DEFAULTS[code]["color"]
         bands.append({"code": code, "name": str(b.get("name") or BAND_DEFAULTS[code]["name"])[:40], "color": color.upper()})
+    scores = _score_grid(m.get("scores"), nc, nl)
     return {
         "name": str(m.get("name") or f"{nc} x {nl} risk matrix")[:120],
         "source": str(m["source"])[:200] if m.get("source") else None,
@@ -100,7 +101,18 @@ def validate(m):
         "likelihood": _levels(m.get("likelihood") or [], nl),
         "bands": bands,
         "cells": [list(r) for r in cells],
+        "scores": scores,
+        "score_higher_is_worse": bool(m.get("score_higher_is_worse", True)) if scores else True,
     }
+
+
+def _score_grid(scores, nc, nl):
+    """The risk number written in each matrix cell, or None when the file only has band names."""
+    if not isinstance(scores, list) or len(scores) != nc or any(not isinstance(r, list) or len(r) != nl for r in scores):
+        return None
+    if any(not isinstance(x, int) or isinstance(x, bool) for r in scores for x in r):
+        return None
+    return [list(r) for r in scores]
 
 
 def current():
@@ -136,14 +148,25 @@ def evaluate(c, l, m=None):
     nc, nl = size(m)
     c, l = max(1, min(nc, int(c))), max(1, min(nl, int(l)))
     b = band_info(m["cells"][c - 1][l - 1], m)
-    return {"score": c * l, "code": b["code"], "name": b["name"], "color": b["color"]}
+    grid = m.get("scores")
+    if grid:
+        score = int(grid[c - 1][l - 1])
+        higher = bool(m.get("score_higher_is_worse", True))
+    else:
+        score, higher = c * l, True
+    return {"score": score, "code": b["code"], "name": b["name"], "color": b["color"], "higher_is_worse": higher}
+
+
+def _severity_key(item):
+    direction = 1 if item.get("higher_is_worse", True) else -1
+    return (rank(item["code"]), direction * item.get("score", 0))
 
 
 def worse(a, b):
-    """The more severe of two evaluated risks (band first, then C x L score)."""
+    """The more severe of two evaluated risks (band first, then the matrix cell)."""
     if a is None:
         return b
-    return b if (rank(b["code"]), b["score"]) > (rank(a["code"]), a["score"]) else a
+    return b if _severity_key(b) > _severity_key(a) else a
 
 
 class MatrixRequired(RuntimeError):

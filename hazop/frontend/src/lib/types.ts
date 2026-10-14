@@ -1,10 +1,13 @@
 export type RiskCode = "L" | "M" | "H" | "VH";
 
 export interface Risk {
+  /** The number written in the risk-matrix cell for this C and L. */
   score: number;
   code: RiskCode;
   name: string;
   color: string;
+  /** When false, a smaller score is the more severe cell (as on the company matrix). */
+  higher_is_worse?: boolean;
 }
 
 export interface RowSource {
@@ -73,8 +76,10 @@ export interface RiskMatrix {
   severity: RiskLevel[];
   likelihood: RiskLevel[];
   bands: RiskBand[];
-  /** cells[c - 1][l - 1] */
+  /** cells[c - 1][l - 1] is the band. scores[c - 1][l - 1] is the number printed in that cell. */
   cells: RiskCode[][];
+  scores?: number[][] | null;
+  score_higher_is_worse?: boolean;
 }
 
 export interface Worksheet {
