@@ -26,6 +26,8 @@ Rules:
 - Use only tags, lines and equipment that appear on the drawing or in the extracted entities. Never invent tag numbers.
 - Keep the node structure sensible (major equipment, control valve / letdown, relief and flare). Add or merge nodes if
   the drawing clearly warrants it.
+- The "boundary" field is the node description. Start it at the inlet or the first equipment, then name every equipment item in the node and what that item is there to do.
+- Write each cause, consequence and safeguard from the duty of that valve or equipment. A ball valve isolates, a check valve stops reverse flow, a globe valve throttles, a pump moves fluid, a vessel separates, a heater adds heat, a relief valve protects against overpressure.
 - For each node use relevant guide-word deviations (No/Less Flow, More Flow, Reverse Flow, High/Low Pressure,
   High/Low Temperature, High/Low Level, Composition/Contamination, Utility Failure, Maintenance/Start-up).
 - Each row: one credible cause, numbered consequences (escalation to the worst credible outcome without safeguards),

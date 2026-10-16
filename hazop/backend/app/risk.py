@@ -181,6 +181,25 @@ def project_matrix():
     return m
 
 
+def describe():
+    """The uploaded matrix in one sentence, so the worksheet records the scale it was ranked on."""
+    m = project_matrix()
+    nc, nl = size(m)
+
+    def levels(rows):
+        parts = []
+        for lv in rows:
+            desc = (lv.get("desc") or "").strip()
+            parts.append(f"{lv['level']} {lv['name']}" + (f" ({desc})" if desc else ""))
+        return "; ".join(parts)
+
+    return (
+        f"The risk matrix '{m['source']}' ({nc} x {nl}) was read and learned after the piping specification and the PFD, "
+        f"and before the P&ID was opened. Every cause on the worksheet uses a cell from that file. "
+        f"Consequence: {levels(m['severity'])}. Likelihood: {levels(m['likelihood'])}."
+    )
+
+
 # The rule engine speaks in five intents. The uploaded file decides which of its own levels that intent is.
 _SEVERITY_INTENT = (
     ("minor", "negligible", "first aid", "slight", "insignificant"),

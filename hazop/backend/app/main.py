@@ -73,15 +73,11 @@ def _require_signup(request: Request):
 
 
 def _options(mode, provider, page, study, node_mode):
-    if mode not in ("rules", "ai"):
-        raise HTTPException(400, "mode must be 'rules' or 'ai'")
+    # The worksheet is produced only by the rule engine. A requested AI review is not run.
+    mode = "rules"
+    provider = ""
     if node_mode not in ("auto", "user"):
         raise HTTPException(400, "node_mode must be 'auto' or 'user'")
-    if mode == "ai":
-        ids = [p["id"] for p in available_ai_providers()]
-        if not ids:
-            raise HTTPException(400, "AI mode needs an API key in backend/.env (OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY).")
-        provider = provider if provider in ids else ids[0]
     try:
         study_data = json.loads(study) if study else {}
     except json.JSONDecodeError:
@@ -217,11 +213,19 @@ def template(name: str):
 
 @app.post("/api/documents/{kind}")
 async def check_document(request: Request, kind: str, file: UploadFile = File(...)):
-    """Validate a piping specification or risk matrix before the analysis starts."""
-    if kind not in ("piping-spec", "risk-matrix"):
+    """Validate a piping specification or risk matrix before the analysis starts. Sign-up is required only to run the study."""
+    if kind not in ("piping-spec", "risk-matrix", "pfd"):
         raise HTTPException(404, "Unknown document type")
-    _require_signup(request)
     limits.check_rate(request, "documents")
+    if kind == "pfd":
+        name, data = await _read(file, "PFD", documents.IMAGE_EXT)
+        try:
+            info = await run_in_threadpool(documents.describe_pfd, data, name)
+        except documents.DocumentError as e:
+            raise HTTPException(400, str(e))
+        pages = info["pages"]
+        summary = f"{pages} page{'s' if pages != 1 else ''}"
+        return {"kind": kind, "name": name, "summary": summary, "pages": pages}
     label = "piping specification" if kind == "piping-spec" else "risk matrix"
     name, data = await _read(file, label, documents.PROJECT_DOC_EXT)
     return _describe(kind, name, await run_in_threadpool(_parse, kind, name, data))
@@ -234,6 +238,7 @@ async def create_job(
     drawings: list[UploadFile] | None = File(None),
     piping_spec: UploadFile = File(...),
     risk_matrix: UploadFile = File(...),
+    pfd: UploadFile = File(...),
     optional_docs: list[UploadFile] | None = File(None),
     mode: str = Form("rules"),
     provider: str = Form(""),
@@ -254,20 +259,27 @@ async def create_job(
     more = [await _read(u, "P&ID", SUPPORTED) for u in uploads[1:]]
     spec_name, spec_data = await _read(piping_spec, "piping specification", documents.PROJECT_DOC_EXT)
     matrix_name, matrix_data = await _read(risk_matrix, "risk matrix", documents.PROJECT_DOC_EXT)
+    pfd_name, pfd_data = await _read(pfd, "PFD", documents.IMAGE_EXT)
+    try:
+        await run_in_threadpool(documents.describe_pfd, pfd_data, pfd_name)
+    except documents.DocumentError as e:
+        raise HTTPException(400, str(e))
     optional = [o for o in optional_docs or [] if o.filename]
     if len(optional) > documents.MAX_OPTIONAL_DOCS:
         raise HTTPException(400, f"Attach at most {documents.MAX_OPTIONAL_DOCS} optional documents.")
     optional = [await _read(o, "optional document", documents.OPTIONAL_EXT) for o in optional]
-    options["documents"] = {"piping_spec": spec_name, "risk_matrix": matrix_name, "optional": [n for n, _ in optional]}
+    options["documents"] = {
+        "piping_spec": spec_name, "risk_matrix": matrix_name, "pfd": pfd_name,
+        "optional": [n for n, _ in optional],
+    }
     project = {
         "specs": await run_in_threadpool(_parse, "piping-spec", spec_name, spec_data),
         "matrix": await run_in_threadpool(_parse, "risk-matrix", matrix_name, matrix_data),
         "piping_spec": (spec_name, spec_data),
         "risk_matrix": (matrix_name, matrix_data),
+        "pfd": (pfd_name, pfd_data),
         "optional": optional,
     }
-    if options["mode"] == "ai":
-        limits.check_ai_budget()
     return jobs.create(data, name, options, project, more)
 
 
@@ -283,8 +295,6 @@ def create_sample_job(request: Request, name: str = Form(""), mode: str = Form("
     options = _options(mode, provider, 0, study, node_mode)
     limits.check_queue(jobs.active())
     limits.check_rate(request, "jobs")
-    if options["mode"] == "ai":
-        limits.check_ai_budget()
     matrix_name = "HAZOP Studio risk matrix template.xlsx"
     matrix_data = documents.risk_matrix_template()
     matrix = documents.parse_risk_matrix(matrix_data, matrix_name)
@@ -327,9 +337,9 @@ def submit_nodes(job_id: str, payload: dict[str, Any] = Body(...)):
 
 
 @app.get("/api/jobs/{job_id}/image")
-def get_job_image(job_id: str):
+def get_job_image(job_id: str, page: int = 0):
     _job_or_404(job_id)
-    path = jobs.image_path(job_id)
+    path = jobs.image_path(job_id, page)
     if not path:
         raise HTTPException(404, "Image not ready")
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})

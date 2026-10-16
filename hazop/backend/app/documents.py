@@ -48,6 +48,33 @@ def ext_of(name):
     return "." + name.rsplit(".", 1)[-1].lower() if "." in (name or "") else ""
 
 
+def describe_pfd(data: bytes, name: str) -> dict:
+    """Confirm an uploaded process flow diagram opens and count its pages."""
+    ext = ext_of(name)
+    if ext not in IMAGE_EXT:
+        raise DocumentError(f"'{name}' is not a PFD. Upload a PDF or an image (PNG, JPG, TIFF).")
+    if not data:
+        raise DocumentError(f"'{name}' is empty.")
+    if ext == ".pdf":
+        doc = pymupdf.open(stream=data, filetype="pdf")
+        try:
+            pages = doc.page_count
+        finally:
+            doc.close()
+        if pages <= 0:
+            raise DocumentError(f"'{name}' has no pages.")
+    else:
+        try:
+            img = Image.open(io.BytesIO(data))
+        except Exception as e:
+            raise DocumentError(f"'{name}' could not be opened as an image.") from e
+        try:
+            pages = getattr(img, "n_frames", 1) or 1
+        finally:
+            img.close()
+    return {"name": name, "pages": pages}
+
+
 def _text(v):
     return "" if v is None else str(v).strip()
 

@@ -61,12 +61,16 @@ function DocSlot({
   state,
   onPick,
   onClear,
+  accept = DOC_ACCEPT,
+  hint = "Excel, Word, PDF or image (JPG, PNG)",
 }: {
   title: string;
   icon: ReactNode;
   state: DocState | null;
   onPick: (f: File) => void;
   onClear: () => void;
+  accept?: string[];
+  hint?: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   return (
@@ -81,7 +85,7 @@ function DocSlot({
       <input
         ref={inputRef}
         type="file"
-        accept={DOC_ACCEPT.join(",")}
+        accept={accept.join(",")}
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -105,7 +109,7 @@ function DocSlot({
               {state.status !== "error" && <span className="min-w-0 truncate">&middot; {state.message}</span>}
             </div>
           ) : (
-            <div className="text-[11px] text-slate-500">Excel, Word, PDF or image (JPG, PNG)</div>
+            <div className="text-[11px] text-slate-500">{hint}</div>
           )}
         </div>
         {state ? (
@@ -146,7 +150,11 @@ export default function UploadPanel({
   const [mode, setMode] = useState<"rules" | "ai">("rules");
   const [nodeMode, setNodeMode] = useState<NodeMode>("auto");
   const [provider, setProvider] = useState<string>("");
-  const [docs, setDocs] = useState<Record<DocumentKind, DocState | null>>({ "piping-spec": null, "risk-matrix": null });
+  const [docs, setDocs] = useState<Record<DocumentKind, DocState | null>>({
+    "piping-spec": null,
+    "risk-matrix": null,
+    pfd: null,
+  });
   const [optional, setOptional] = useState<File[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const optionalRef = useRef<HTMLInputElement>(null);
@@ -183,10 +191,15 @@ export default function UploadPanel({
 
   const pickDoc = async (kind: DocumentKind, f: File) => {
     const fail = (message: string) => setDocs((d) => ({ ...d, [kind]: { file: f, status: "error", message } }));
-    if (!DOC_ACCEPT.includes(extOf(f.name))) return fail("Upload an Excel or Word file, a PDF or an image (JPG, PNG).");
+    const allowed = kind === "pfd" ? ACCEPT : DOC_ACCEPT;
+    if (!allowed.includes(extOf(f.name))) {
+      return fail(kind === "pfd"
+        ? "Upload the PFD as a PDF or an image (PNG, JPG, TIFF)."
+        : "Upload an Excel or Word file, a PDF or an image (JPG, PNG).");
+    }
     const big = tooBig(f);
     if (big) return fail(big);
-    const message = OFFICE.includes(extOf(f.name)) ? "Checking…" : "Reading the table (OCR)…";
+    const message = kind === "pfd" ? "Checking the drawing…" : OFFICE.includes(extOf(f.name)) ? "Checking…" : "Reading the table (OCR)…";
     setDocs((d) => ({ ...d, [kind]: { file: f, status: "checking", message } }));
     try {
       const res = await checkDocument(kind, f);
@@ -219,18 +232,20 @@ export default function UploadPanel({
 
   const spec = docs["piping-spec"];
   const matrix = docs["risk-matrix"];
+  const pfd = docs.pfd;
   const missing = [
     files.length === 0 && "P&ID",
     spec?.status !== "ok" && "piping specification",
     matrix?.status !== "ok" && "risk matrix",
+    pfd?.status !== "ok" && "PFD",
   ].filter(Boolean) as string[];
   const ready = missing.length === 0;
 
   const start = () => {
-    if (!files.length || !spec || !matrix || !ready) return;
+    if (!files.length || !spec || !matrix || !pfd || !ready) return;
     onStart(
       files,
-      { pipingSpec: spec.file, riskMatrix: matrix.file, optional },
+      { pipingSpec: spec.file, riskMatrix: matrix.file, pfd: pfd.file, optional },
       {
         mode,
         nodeMode,
@@ -245,7 +260,7 @@ export default function UploadPanel({
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold text-slate-900">Start a new study</h2>
-          <p className="text-xs text-slate-500">Upload up to {maxSheets} P&amp;IDs in one run, plus the piping specification and risk matrix.</p>
+          <p className="text-xs text-slate-500">Upload up to {maxSheets} P&amp;IDs in one run, plus the piping specification, risk matrix and PFD.</p>
         </div>
         <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200">
           Up to {maxSheets} P&amp;IDs
@@ -364,6 +379,15 @@ export default function UploadPanel({
           onPick={(f) => pickDoc("risk-matrix", f)}
           onClear={() => setDocs((d) => ({ ...d, "risk-matrix": null }))}
         />
+        <DocSlot
+          title="PFD"
+          icon={<FileText className="h-4 w-4" />}
+          state={pfd}
+          accept={ACCEPT}
+          hint="PDF or image (PNG, JPG, TIFF)"
+          onPick={(f) => pickDoc("pfd", f)}
+          onClear={() => setDocs((d) => ({ ...d, pfd: null }))}
+        />
 
         <div className="rounded-xl border border-dashed border-slate-200 p-3">
           <input
@@ -386,7 +410,7 @@ export default function UploadPanel({
                 Other documents
                 <span className="rounded bg-slate-100 px-1 py-px text-[10px] font-medium text-slate-500 ring-1 ring-slate-200">Optional</span>
               </div>
-              <div className="text-[11px] text-slate-500">PFD, cause &amp; effect, datasheets… up to {maxOptional}</div>
+              <div className="text-[11px] text-slate-500">Cause &amp; effect, datasheets… up to {maxOptional}</div>
             </div>
             <Button
               variant="ghost"

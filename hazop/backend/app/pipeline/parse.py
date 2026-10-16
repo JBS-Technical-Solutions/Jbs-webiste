@@ -195,7 +195,7 @@ def _parse_lines(tokens):
         compact = t.text.replace(" ", "")
         for m in LINE_RE.finditer(compact):
             size, service, spec, number, insul = m.groups()
-            if service not in services:
+            if service not in services and spec not in kb.specs():
                 continue
             key = (service, spec, number)
             cur = found.setdefault(key, {"size": None, "service": service, "spec": spec, "number": number,
@@ -204,6 +204,17 @@ def _parse_lines(tokens):
             cur["insulation"] = cur["insulation"] or insul
             cur["_toks"].append(t)
             t.used = True
+            if not cur["size"]:
+                for n in tokens:
+                    if n is t or n.x1 > t.x0 + 0.4 * t.h:
+                        continue
+                    gap = t.x0 - n.x1
+                    if gap > 1.6 * t.h or gap < -0.4 * t.h or abs(n.cy - t.cy) > 0.7 * max(n.h, t.h):
+                        continue
+                    sm = SIZE_RE.match(n.text.replace(" ", ""))
+                    if sm:
+                        cur["size"] = sm.group(1).replace("1.1/2", "1-1/2") + '"'
+                        break
     out = []
     for i, e in enumerate(found.values(), 1):
         spec = kb.spec(e["spec"])
@@ -446,6 +457,18 @@ def _parse_valves(tokens):
             out.append({"code": code, "type": kb.valve_type(code), "size": size, "attributes": attrs, "box": t.box(),
                         "_tok": t})
             t.used = True
+    # Overlapping OCR tiles read one valve several times. Keep one when the same code sits on the same spot.
+    kept = []
+    for valve in out:
+        box = valve["box"]
+        cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        span = max(box[2] - box[0], box[3] - box[1], 8)
+        if any(valve["code"] == other["code"] and ((cx - ox) ** 2 + (cy - oy) ** 2) ** 0.5 < 3 * span
+               for other in kept for ox, oy in [(((other["box"][0] + other["box"][2]) / 2),
+                                                 ((other["box"][1] + other["box"][3]) / 2))]):
+            continue
+        kept.append(valve)
+    out = kept
     for i, v in enumerate(out, 1):
         v["id"] = f"V{i}"
     return out
@@ -515,8 +538,9 @@ def _parse_equipment(tokens, connector_blocks):
                     lines = _text_lines(region)
                     cand = cand or (_clean_phrase(lines[0]["text"]) if lines else _clean_phrase(first_line))
                     break
-            if cand and len(cand) > len(description):
-                description = cand
+            name = _equipment_name(cand, first_line, region)
+            if name and (not description or _name_rank(name) > _name_rank(description)):
+                description = name
             for rx, keys_ in ((DESIGN_P_RE, ("p_des", "p_op")), (DESIGN_T_RE, ("t_des", "t_op", "t_min"))):
                 m = rx.search(compact)
                 if m:
@@ -615,6 +639,32 @@ def _parse_connectors(groups, lines, tokens):
     return out
 
 
+def _name_rank(text):
+    """A short equipment title outranks a long note or an off-page sentence."""
+    words = text.split()
+    if not words or len(words) > 8:
+        return 0
+    compact = text.upper()
+    if any(w in compact for w in ("DELETED", "BECAUSE", "NOTE", "BOTTOM TANGENT", "CONTINUED")):
+        return 0
+    hit = any(word in compact for _, words_ in EQUIPMENT_KEYWORDS for word in words_)
+    return (2 if hit else 1) * 10 - len(words)
+
+
+def _equipment_name(cand, first_line, region):
+    """The name written with the tag, not the longest nearby note."""
+    lines = _text_lines(region) if region else []
+    choices = []
+    for text in [cand, _clean_phrase(first_line), *(_clean_phrase(ln["text"]) for ln in lines[:3])]:
+        text = re.sub(r"\s+", " ", text or "").strip(" -")
+        if text and text not in choices:
+            choices.append(text)
+    ranked = [text for text in choices if _name_rank(text)]
+    if not ranked:
+        return ""
+    return max(ranked, key=_name_rank)
+
+
 def _title(text):
     keep = {"HP", "LP", "MP", "K.O.", "KO", "PSV", "SDV", "BDV"}
     return " ".join(w if w in keep or re.search(r"\d", w) else w.capitalize() for w in text.split())
@@ -646,17 +696,93 @@ def _attach_instrument_details(instruments, tokens):
                 inst["set_point"] = sp
 
 
+_SPEC_CODE = re.compile(r"^[A-Z]{1,2}\d{1,2}[A-Z]?$")
+_SPEC_BREAK_WORD = re.compile(r"SPEC(?:IFICATION)?BR(?:EA)?K|^SB$")
+
+
+def _box_gap(a, b):
+    dx = max(a[0] - b[2], b[0] - a[2], 0)
+    dy = max(a[1] - b[3], b[1] - a[3], 0)
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _part_of_line_number(tok, tokens):
+    """A spec code written inside a line number is not itself a spec-break mark."""
+    text = tok.text.replace(" ", "").upper()
+    if LINE_RE.search(text):
+        return True
+    for other in _near(tokens, tok, 2.4 * max(tok.size, 8)):
+        if abs(other.cy - tok.cy) > 0.8 * max(other.h, tok.h):
+            continue
+        raw = other.text.replace(" ", "").upper()
+        if LINE_RE.search(raw) or re.fullmatch(r"\d{1,2}\"", raw) or re.fullmatch(r"\d{3,5}", raw):
+            return True
+    return False
+
+
 def _parse_spec_breaks(tokens, lines):
-    specs = {l["spec"] for l in lines if l["spec_known"]}
-    marks = [t for t in tokens if t.text.replace(" ", "") in specs]
-    out, used = [], set()
-    for a in marks:
-        for b in marks:
-            if a is b or id(a) in used or id(b) in used or a.text == b.text:
+    """A real spec break: a SPEC BREAK label, or two class codes written together and not inside line numbers."""
+    catalog = set(kb.specs()) | {ln["spec"] for ln in lines if ln.get("spec")}
+    marks = []
+    for t in tokens:
+        text = t.text.replace(" ", "").upper()
+        if text not in catalog:
+            continue
+        if _part_of_line_number(t, tokens):
+            continue
+        marks.append((text, t))
+    out, seen = [], set()
+
+    def add(specs, box, line_tags):
+        specs = tuple(sorted({s for s in specs if s}))
+        if len(specs) < 2:
+            return
+        key = (specs, round(box[0], -1), round(box[1], -1))
+        if key in seen:
+            return
+        for existing in out:
+            if existing["specs"] == list(specs) and _box_gap(existing["box"], box) < 120:
+                return
+        seen.add(key)
+        out.append({
+            "tag": f"SB{len(out) + 1}-" + "-".join(specs),
+            "specs": list(specs),
+            "lines": list(dict.fromkeys(line_tags)),
+            "box": box,
+        })
+
+    def lines_near(box, codes):
+        found = []
+        for ln in lines:
+            if ln.get("spec") not in codes:
                 continue
-            if _dist(a, b) < 6 * max(a.size, b.size):
-                used |= {id(a), id(b)}
-                out.append({"specs": sorted({a.text, b.text}), "box": _union([a.box(), b.box()])})
+            if _box_gap(ln["box"], box) < 12 * max(20, (ln["box"][3] - ln["box"][1])):
+                found.append(ln["tag"])
+        return found
+
+    for i, (code_a, tok_a) in enumerate(marks):
+        for code_b, tok_b in marks[i + 1:]:
+            if code_a == code_b:
+                continue
+            if _dist(tok_a, tok_b) < 3 * max(tok_a.size, tok_b.size, 8):
+                box = _union([tok_a.box(), tok_b.box()])
+                add((code_a, code_b), box, lines_near(box, {code_a, code_b}))
+
+    for t in tokens:
+        if not _SPEC_BREAK_WORD.search(t.text.replace(" ", "").upper()):
+            continue
+        near = sorted(marks, key=lambda item: _dist(item[1], t))
+        codes = []
+        for code, tok in near:
+            if _dist(tok, t) > 14 * max(t.size, 8):
+                break
+            if code not in codes:
+                codes.append(code)
+            if len(codes) == 2:
+                break
+        if len(codes) == 2:
+            box = t.box()
+            add(codes, box, lines_near(box, set(codes)))
     return out
 
 

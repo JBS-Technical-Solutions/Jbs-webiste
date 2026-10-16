@@ -67,7 +67,7 @@ def _worksheet(wb, result):
         c.alignment = Alignment(vertical="center")
         ws.row_dimensions[r].height = 22
         r += 1
-        for label, key in (("Node boundary", "boundary"), ("Design intent", "design_intent"),
+        for label, key in (("Node description", "boundary"), ("Design intent", "design_intent"),
                            ("Design conditions", "design_conditions")):
             a = ws.cell(row=r, column=1, value=label)
             a.font = Font(name="Arial", bold=True, size=9)
@@ -213,6 +213,10 @@ def _extracted(wb, ext):
          ext.get("valves", [])),
     ]
     for title, header, fn, items in sheets:
+        if any(isinstance(it, dict) and "page" in it for it in items):
+            header = ["Sheet", *header]
+            row_fn = fn
+            fn = lambda it, row_fn=row_fn: [it.get("page", 0) + 1, *row_fn(it)]
         ws = wb.create_sheet(title)
         _header(ws, 1, header)
         for i, item in enumerate(items, 2):

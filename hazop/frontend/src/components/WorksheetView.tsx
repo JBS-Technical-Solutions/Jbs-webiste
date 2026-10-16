@@ -395,7 +395,7 @@ export default function WorksheetView({
           <div className="grid gap-px bg-slate-200 md:grid-cols-3">
             {(
               [
-                ["Node boundary", "boundary", node.boundary],
+                ["Node description", "boundary", node.boundary],
                 ["Design intent", "design_intent", node.design_intent],
                 ["Design conditions", "design_conditions", node.design_conditions],
               ] as const

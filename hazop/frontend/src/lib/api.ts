@@ -50,6 +50,7 @@ export interface JobOptions {
 export interface ProjectDocuments {
   pipingSpec: File;
   riskMatrix: File;
+  pfd: File;
   optional: File[];
 }
 
@@ -63,6 +64,7 @@ export async function createJob(files: File[], docs: ProjectDocuments, opts: Job
   files.slice(1).forEach((f) => form.append("drawings", f));
   form.set("piping_spec", docs.pipingSpec);
   form.set("risk_matrix", docs.riskMatrix);
+  form.set("pfd", docs.pfd);
   docs.optional.forEach((f) => form.append("optional_docs", f));
   return handle(await fetch(`${API_URL}/api/jobs`, { method: "POST", body: form, headers: authHeaders() }));
 }

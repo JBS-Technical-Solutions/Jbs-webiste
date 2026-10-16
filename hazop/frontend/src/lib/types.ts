@@ -258,13 +258,13 @@ export interface Job {
     mode: "rules" | "ai";
     provider?: string;
     node_mode?: NodeMode;
-    documents?: { piping_spec: string; risk_matrix: string; optional: string[] };
+    documents?: { piping_spec: string; risk_matrix: string; pfd?: string; optional: string[] };
   };
   review?: NodeReview;
   result?: JobResult;
 }
 
-export type DocumentKind = "piping-spec" | "risk-matrix";
+export type DocumentKind = "piping-spec" | "risk-matrix" | "pfd";
 
 export interface DocumentCheck {
   kind: DocumentKind;

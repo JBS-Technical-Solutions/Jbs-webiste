@@ -37,6 +37,11 @@ def specs():
     return _project_specs.get() or piping()["specs"]
 
 
+def has_project_specs():
+    """True while an uploaded piping specification is the one the study is using."""
+    return _project_specs.get() is not None
+
+
 @contextmanager
 def using_specs(project_specs):
     token = _project_specs.set(project_specs or None)
@@ -44,6 +49,29 @@ def using_specs(project_specs):
         yield
     finally:
         _project_specs.reset(token)
+
+
+def learn_piping():
+    """Read every class before the P&ID: what it is for, and the limit it places on a line."""
+    learned = []
+    for code, row in specs().items():
+        services = ", ".join(row.get("services") or []) or "the service written on the line"
+        sour = "sour" if row.get("sour_service") else "non-sour"
+        psig = spec_rating_psig(code) if row.get("pressure_temp") else None
+        limits = ""
+        if psig or row.get("min_temp_f") is not None:
+            limits = (
+                f" Its limit is {psig or '-'} psig at 100 F, "
+                f"{row.get('min_temp_f', '-')} F to {row.get('max_temp_f', '-')} F."
+            )
+        learned.append({
+            "code": code,
+            "purpose": (
+                f"{code} is a {row.get('rating') or 'piping'} class in {sour} service, "
+                f"material {row.get('material') or 'not stated'}, used for {services}.{limits}"
+            ),
+        })
+    return learned
 
 
 def spec(code):

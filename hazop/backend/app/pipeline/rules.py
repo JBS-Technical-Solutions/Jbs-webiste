@@ -6,6 +6,7 @@ Utility failure, Maintenance). Safeguards are taken from the instruments and val
 actually found on the drawing and design limits come from the piping-spec knowledge base.
 """
 
+import colorsys
 import copy
 import re
 from collections import Counter
@@ -107,21 +108,30 @@ class Ctx:
         return ", ".join(seen)
 
     def node_start(self):
-        """Where this node is read from: the inlet connector, or the equipment the process line leaves."""
-        if self.sources:
-            text = re.sub(r"(?i)^from\s+", "", self.src_text())
-            return f"the inlet connector ({text})"
+        """Where this node is read from: one inlet, or the equipment the process line leaves."""
+        inlet = self._inlet()
+        if inlet:
+            text = re.sub(r"(?i)^from\s+", "", inlet.get("description") or "upstream supply")
+            line = f" ({inlet['line']})" if inlet.get("line") else ""
+            return f"the inlet connector ({text}{line})"
         mains = [e for e in self.equipment if not e.get("offpage") and e.get("kind") not in ("panel", "package") and e.get("box")]
         if mains:
             first = min(mains, key=lambda e: (e["box"][0] + e["box"][2]) / 2)
             return f"{first['tag']}, where the process line originates"
         return "the process equipment"
 
-    def src_text(self):
+    def _inlet(self):
+        """The upstream connector at the start of the node, not every FROM mark on the sheet."""
         if not self.sources:
+            return None
+        return min(self.sources, key=lambda c: ((c.get("box") or [1, 1, 1, 1])[0], (c.get("box") or [0, 1, 0, 1])[1]))
+
+    def src_text(self):
+        inlet = self._inlet()
+        if not inlet:
             return "upstream supply"
-        return " and ".join(
-            re.sub(r"(?i)^from\s+", "", c["description"]) + (f" ({c['line']})" if c["line"] else "") for c in self.sources)
+        text = re.sub(r"(?i)^from\s+", "", inlet.get("description") or "upstream supply")
+        return text + (f" ({inlet['line']})" if inlet.get("line") else "")
 
     def dest_text(self):
         if not self.dests:
@@ -136,16 +146,123 @@ class Ctx:
 
 # ------------------------------------------------------------- safeguard helpers
 
-def _boundary(ctx, tag, stop_at=None, extra=""):
-    """Node description starts at the inlet, or at the equipment the process line leaves."""
+def _equipment_duty(eq, ctx):
+    """What this equipment is on the drawing to do."""
+    fluid = ctx.fluid
+    return {
+        "heater": f"heat {fluid}",
+        "vessel": f"separate liquid from {fluid}",
+        "exchanger": f"transfer heat to or from {fluid}",
+        "pump": f"move {fluid}",
+        "compressor": f"raise the pressure of {fluid}",
+        "tank": f"hold an inventory of {fluid}",
+        "package": f"contain the {fluid} equipment mounted on the package",
+        "panel": f"control the equipment from a panel",
+    }.get(eq.get("kind") or "", f"handle {fluid}")
+
+
+def _valve_duty(valve):
+    """What this piping component is on the drawing to do."""
+    kind = str(valve.get("type") or "").lower()
+    attrs = set(valve.get("attributes") or [])
+    if kind.startswith("check"):
+        return "stop reverse flow"
+    if kind.startswith("globe"):
+        return "throttle flow by hand"
+    if kind.startswith("needle"):
+        return "vent, drain or bleed a small flow"
+    if attrs & {"CSO", "LO", "NO"}:
+        return "stay open so this path keeps flowing"
+    if attrs & {"CSC", "LC", "NC"}:
+        return "stay closed so this path stays isolated"
+    if kind.startswith(("ball", "gate", "plug", "butterfly")):
+        return "isolate the line when it is closed"
+    return "control the path it is installed in"
+
+
+def _reading_order(items):
+    """Top to bottom, then left to right, which is how the P&ID sheet is read."""
+    def key(item):
+        box = item.get("box") or [0, 0, 0, 0]
+        return ((box[1] + box[3]) / 2, (box[0] + box[2]) / 2)
+    return sorted(items, key=key)
+
+
+def _line_function(line):
+    """Pipeline identification from the line designation and the piping specification."""
+    service = line.get("service_name") or line.get("service") or "process"
+    insulation = (kb.services().get("insulation") or {}).get(line.get("insulation") or "", "")
+    parts = [f"{line.get('tag')} carries {service}"]
+    if insulation:
+        parts.append(insulation)
+    if line.get("spec"):
+        rating = " ".join(x for x in (line.get("rating"), line.get("material")) if x)
+        parts.append(f"class {line['spec']}" + (f" {rating}" if rating else ""))
+    return ", ".join(parts)
+
+
+def _design_conditions(ctx):
+    """Specification of the main equipment, from the drawing and the piping specification."""
+    mains = [e for e in _reading_order(ctx.equipment) if not e.get("offpage") and e.get("kind") not in ("panel", "package")]
+    sentences = []
+    spec = ctx.proc_spec
+    for eq in mains[:6]:
+        d = eq.get("design") or {}
+        bits = [_equipment_function(eq, ctx).split(" is trying to ")[0]]
+        if d.get("p_des"):
+            bits.append(f"design pressure {d['p_des']} psig")
+        if d.get("p_op"):
+            bits.append(f"operating pressure {d['p_op']} psig")
+        if d.get("t_des"):
+            bits.append(f"design temperature {d['t_des']} {DEG}")
+        if d.get("t_op") is not None:
+            bits.append(f"operating temperature {d['t_op']} {DEG}")
+        if spec:
+            bits.append(
+                f"piping class {spec.get('spec')} {spec.get('rating') or ''}, {spec.get('material') or ''}, "
+                f"{spec.get('rating_psig') or '-'} psig, {spec.get('min_temp_f')} to {spec.get('max_temp_f')} {DEG}".strip()
+            )
+        sentences.append(", ".join(bit for bit in bits if bit))
+    return "; ".join(sentences)
+
+
+def _equipment_function(eq, ctx):
+    prefix = re.match(r"[A-Z]+", str(eq.get("tag") or ""))
+    decoded = kb.decode_equipment(prefix.group()) if prefix else None
+    name = (eq.get("description") or decoded or KIND_LABEL.get(eq.get("kind"), "equipment")).strip()
+    identity = f"{decoded}; " if decoded and decoded.lower() not in name.lower() else ""
+    return f"{eq.get('tag')} ({identity}{name}) is trying to {_equipment_duty(eq, ctx)}"
+
+
+def _node_description(ctx, color=None):
+    """Node description: start at the inlet, then every element in reading order and what it is for."""
     start = ctx.node_start()
-    own = start == tag or start.startswith(tag + ",") or start.startswith(tag + " ")
-    head = f"From {start}" if own else f"From {start} through {tag}"
-    if extra:
-        head += extra
-    if stop_at:
-        return head + f", up to {stop_at}."
-    return head + f", to {ctx.dest_text()}."
+    equipment = [e for e in _reading_order(ctx.equipment) if not e.get("offpage") and e.get("kind") not in ("panel", "package")]
+    lines = [ln for ln in _reading_order(ctx.process_lines)]
+    instruments = _reading_order(ctx.instruments)
+    valves = _reading_order(ctx.valves)
+    parts = [_equipment_function(eq, ctx) for eq in equipment[:8]]
+    parts += [_line_function(ln) for ln in lines[:8]]
+    parts += [f"{inst.get('tag')} is trying to {_instrument_duty(inst)}" for inst in instruments[:10]]
+    parts += [f"{valve.get('code')} is trying to {_valve_duty(valve)}" for valve in valves[:8]]
+    listed = "; ".join(parts) if parts else "no equipment, line or instrument was read inside this node"
+    text = f"The node starts at {start}. Read from that start to the end of the node: {listed}."
+    if color:
+        text += f" The {color} marking was followed from its start to its end."
+    return text
+
+
+def _listed(items, key, limit=12):
+    tags = []
+    for item in items:
+        tag = str(item.get(key) or "").strip()
+        if tag and tag not in tags:
+            tags.append(tag)
+    if not tags:
+        return "none read"
+    shown = ", ".join(tags[:limit])
+    more = f" and {len(tags) - limit} more" if len(tags) > limit else ""
+    return shown + more
 
 
 def sg(text, tag, strong=False):
@@ -253,6 +370,329 @@ KIND_LABEL = {"heater": "heater", "vessel": "vessel", "exchanger": "heat exchang
               "compressor": "compressor", "tank": "tank", "equipment": "equipment"}
 
 
+def _point_box(px, py, box):
+    dx = max(box[0] - px, 0, px - box[2])
+    dy = max(box[1] - py, 0, py - box[3])
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _nearest_line(lines, box, limit=0.1):
+    if not box:
+        return None
+    cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+    best, dist = None, 1e9
+    for line in lines:
+        boxes = line.get("boxes") or ([line["box"]] if line.get("box") else [])
+        for candidate in boxes:
+            d = _point_box(cx, cy, candidate)
+            if d < dist:
+                best, dist = line, d
+    if best is None or (limit is not None and dist > limit):
+        return None
+    return best
+
+
+def _isolation_valves(ctx):
+    return [v for v in ctx.valves if any(str(v.get("type") or "").lower().startswith(kind) for kind in _ISOLATION)]
+
+
+def _isolation_cause(ctx, box, anchor):
+    """Name the isolation valves next to one component instead of a generic valve."""
+    valves = [v for v in _isolation_valves(ctx) if v.get("box") and box and _near_any(v["box"], [box], 0.08)]
+    if valves:
+        return f"Inadvertent closure of {ctx.names(valves)} on the line through {anchor}."
+    line = _nearest_line(ctx.process_lines, box)
+    if line:
+        return (f"Inadvertent closure of an isolation valve on {line['tag']} "
+                f"(piping class {line.get('spec') or 'not read'}) through {anchor}. No valve tag was read on that line.")
+    return f"Inadvertent closure of an isolation valve on the line through {anchor}. No valve tag was read next to it."
+
+
+def _spec_text(code, line_tags):
+    shown = ", ".join(line_tags[:4])
+    more = f" +{len(line_tags) - 4}" if len(line_tags) > 4 else ""
+    where = f" on {shown}{more}" if shown else ""
+    info = kb.spec(code)
+    if not info:
+        return f"{code}{where}: not in the uploaded piping specification"
+    psig = kb.spec_rating_psig(code)
+    rating = " ".join(x for x in (info.get("rating"), info.get("material"), f"{psig} psig" if psig else "") if x)
+    return f"{code}{where}: {rating}"
+
+
+def _place_row(node, deviation, cause, consequences, safeguards, c, base_l, recs=()):
+    """Add one cause under the deviation that matches this component's duty."""
+    found = next((d for d in node.setdefault("deviations", [])
+                  if str(d.get("deviation") or "").endswith(deviation)), None)
+    if found is None:
+        found = {"deviation": deviation, "rows": []}
+        node["deviations"].append(found)
+    found.setdefault("rows", []).append(row(cause, consequences, "A" if c < 4 else "S", safeguards, c, base_l, recs))
+
+
+def _instrument_duty(inst):
+    """What this instrument is on the drawing to do, from its ISA letters."""
+    letters = inst.get("letters") or ""
+    meaning = kb.describe_instrument(letters) if letters else (inst.get("tag") or "instrument")
+    category = inst.get("category")
+    if category == "controller":
+        point = f" at {inst['set_point']}" if inst.get("set_point") else ""
+        return f"control the process ({meaning}{point})"
+    if category == "control_valve":
+        fail = {"FC": " and close on loss of air", "FO": " and open on loss of air", "FL": " and stay put on loss of air"}.get(inst.get("fail_action") or "", "")
+        return f"regulate the process ({meaning}{fail})"
+    if category == "trip":
+        return f"trip the process ({meaning})"
+    if category == "alarm":
+        return f"warn the operator ({meaning})"
+    if category == "switch":
+        return f"switch at the set limit ({meaning})"
+    if category == "relief":
+        set_at = f", set at {inst['set_psig']} psig" if inst.get("set_psig") else ""
+        return f"relieve pressure before the piping or equipment is overpressured{set_at}"
+    if category == "indicator":
+        return f"show the measurement locally ({meaning})"
+    return meaning[0].lower() + meaning[1:] if meaning else "measure the process"
+
+
+def _instrument_deviation(inst):
+    letters = inst.get("letters") or ""
+    rest = letters[1:]
+    high = "H" in rest
+    low = "L" in rest and not high
+    var = letters[:1]
+    if inst.get("category") == "relief":
+        return "High Pressure"
+    if inst.get("category") == "control_valve":
+        return "No / Less Flow" if inst.get("fail_action") == "FC" else "More Flow"
+    return {
+        "F": "No / Less Flow" if low or not high else "More Flow",
+        "P": "Low Pressure" if low else "High Pressure",
+        "T": "Low Temperature" if low else "High Temperature",
+        "L": "Low Level" if low else "High Level",
+    }.get(var, "No / Less Flow")
+
+
+def _instrument_effect(inst, duty):
+    category = inst.get("category")
+    tag = inst.get("tag") or "the instrument"
+    if category == "trip":
+        return f"{tag} no longer {duty}. The condition it was meant to stop can continue."
+    if category == "alarm":
+        return f"{tag} no longer {duty}. The operator is not told that the limit has been reached."
+    if category == "controller":
+        return f"{tag} no longer {duty}. The process variable moves away from its set point."
+    if category == "control_valve":
+        return f"{tag} no longer {duty}. Flow through the valve is no longer held at the intended rate."
+    if category == "relief":
+        return f"{tag} no longer {duty}. Pressure can rise above the piping class and equipment design."
+    if category == "indicator":
+        return f"{tag} no longer {duty}. The measurement is not available at the panel or locally."
+    if category == "switch":
+        return f"{tag} no longer {duty}. The action at that limit does not happen."
+    return f"{tag} no longer does its duty ({duty})."
+
+
+def _same_variable_safeguards(ctx, inst):
+    letters = inst.get("letters") or ""
+    if not letters:
+        return []
+    out = []
+    for other in ctx.instruments:
+        if other is inst or other.get("tag") == inst.get("tag"):
+            continue
+        if (other.get("letters") or "")[:1] != letters[:1]:
+            continue
+        if other.get("category") not in ("trip", "alarm", "controller", "relief", "switch"):
+            continue
+        out.append(sg(kb.describe_instrument(other.get("letters") or other.get("tag") or ""), other.get("tag") or "-",
+                       strong=other.get("category") in ("trip", "relief")))
+        if len(out) == 3:
+            break
+    if letters[:1] == "P":
+        out.extend(relief_safeguards(ctx)[:1])
+    return out
+
+
+def _instrument_row(node, ctx, inst):
+    duty = _instrument_duty(inst)
+    tag = inst.get("tag") or "instrument"
+    line = _nearest_line(ctx.lines, inst.get("box"), limit=None)
+    where = f" on {line['tag']}" if line else ""
+    _place_row(
+        node, _instrument_deviation(inst),
+        f"If {tag} faults{where}, it can no longer {duty}.",
+        [_instrument_effect(inst, duty)],
+        _same_variable_safeguards(ctx, inst),
+        4 if inst.get("category") in ("trip", "relief", "control_valve") else 3, 2,
+    )
+
+
+def _component_rows(node, ctx):
+    """Write each cause from the duty of that valve or equipment item."""
+    for valve in _reading_order(ctx.valves):
+        code = valve.get("code") or "valve"
+        duty = _valve_duty(valve)
+        line = _nearest_line(ctx.lines, valve.get("box"), limit=None)
+        where = f" on {line['tag']}" if line else ""
+        kind = str(valve.get("type") or "").lower()
+        if kind.startswith("check"):
+            others = [v for v in ctx.valves if v is not valve and str(v.get("type") or "").lower().startswith("check")]
+            _place_row(
+                node, "Reverse Flow",
+                f"{code} fails open{where}. Its duty is to {duty}.",
+                [f"Reverse flow passes {code}{where} into the upstream side."],
+                [sg(f"Second check valve {v['code']}", v["code"], strong=True) for v in others[:2]],
+                3, 2,
+                [] if others else [ctx.recs.add(f"Confirm a check valve remains on the line through {code} to {duty}.")],
+            )
+        elif kind.startswith("globe"):
+            _place_row(
+                node, "More Flow",
+                f"{code} is opened{where}. Its duty is to {duty}.",
+                [f"Flow{where} is no longer throttled by {code} and can exceed the intended rate."],
+                controller_safeguard(ctx, "F"),
+                3, 2,
+            )
+        elif kind.startswith("needle"):
+            _place_row(
+                node, "Maintenance / Isolation",
+                f"{code} is left open{where}. Its duty is to {duty}.",
+                [f"A continuous release of {ctx.release} leaves through {code}."],
+                [sg(f"Normally closed {code}", code)] if set(valve.get("attributes") or []) & {"NC", "CSC", "LC"} else [],
+                3, 2,
+            )
+        elif set(valve.get("attributes") or []) & {"CSC", "LC", "NC"}:
+            _place_row(
+                node, "More Flow",
+                f"{code} is opened{where}. Its duty is to {duty}.",
+                [f"A path that {code} is meant to keep isolated starts passing flow{where}."],
+                [sg(f"Car seal or lock closed on {code}", code)],
+                3, 2,
+            )
+        else:
+            held = set(valve.get("attributes") or []) & {"CSO", "LO", "NO"}
+            _place_row(
+                node, "No / Less Flow",
+                f"{code} is closed{where}. Its duty is to {duty}.",
+                [f"Flow stops{where} at {code} only. Piping upstream of {code} can be blocked in."],
+                ([sg(f"Car seal open on {code}", code)] if held else []) + trip_safeguards(ctx, "F", "L") + relief_safeguards(ctx),
+                3, 2,
+            )
+
+    for eq in _reading_order(ctx.equipment):
+        if eq.get("offpage") or eq.get("kind") in ("panel", "package"):
+            continue
+        duty = _equipment_duty(eq, ctx)
+        tag = eq["tag"]
+        kind = eq.get("kind")
+        if kind == "pump":
+            safeguards = trip_safeguards(ctx, "F", "L")
+            effect = f"{tag} no longer moves {ctx.fluid}. The pump can run dry and the downstream supply is lost."
+        elif kind == "compressor":
+            safeguards = trip_safeguards(ctx, "F", "L") + trip_safeguards(ctx, "P", "H")
+            effect = f"{tag} no longer raises the pressure of {ctx.fluid}. The machine can surge and downstream pressure falls."
+        elif kind == "heater":
+            safeguards = trip_safeguards(ctx, "T", "H") + skin_safeguards(ctx)
+            effect = f"{tag} no longer heats {ctx.fluid}, or it stays energised with no flow and the element overheats."
+        elif kind in ("vessel", "tank"):
+            safeguards = trip_safeguards(ctx, "L", "H") + trip_safeguards(ctx, "L", "L")
+            effect = f"{tag} no longer holds the liquid and gas apart. Liquid can carry over, or gas can blow through to the liquid outlet."
+        elif kind == "exchanger":
+            safeguards = trip_safeguards(ctx, "T", "H") + trip_safeguards(ctx, "T", "L")
+            effect = f"{tag} no longer transfers heat. The outlet temperature of {ctx.fluid} leaves its intended range."
+        else:
+            safeguards = relief_safeguards(ctx)
+            effect = f"{tag} no longer does its duty, so {ctx.fluid} is not handled as intended."
+        _place_row(
+            node, "No / Less Flow",
+            f"{tag} fails. Its duty is to {duty}.",
+            [effect],
+            safeguards, 4 if kind in ("heater", "pump", "compressor") else 3, 2,
+        )
+
+    for inst in _reading_order(ctx.instruments):
+        _instrument_row(node, ctx, inst)
+
+
+def _pinpoint_node(node, ctx, color=None):
+    """Name each component by its duty, and write the node description from the start and the equipment."""
+    _component_rows(node, ctx)
+    node["boundary"] = _node_description(ctx, color)
+    duties = []
+    for eq in _reading_order(ctx.equipment):
+        if eq.get("offpage") or eq.get("kind") in ("panel", "package"):
+            continue
+        name = (eq.get("description") or eq.get("kind") or "equipment").strip()
+        duties.append(f"{eq['tag']} ({name}) is there to {_equipment_duty(eq, ctx)}")
+    if duties:
+        purpose = "The purpose of this node, read from its equipment, is " + "; ".join(duties[:8]) + "."
+        current = (node.get("design_intent") or "").strip()
+        if purpose not in current:
+            node["design_intent"] = f"{purpose} {current}".strip()
+    by_spec = {}
+    for line in ctx.lines:
+        if line.get("spec"):
+            by_spec.setdefault(line["spec"], []).append(line["tag"])
+    node_tags = {line["tag"] for line in ctx.lines}
+    spec_rows = []
+    for br in ctx.ext.get("spec_breaks") or []:
+        specs = [s for s in (br.get("specs") or []) if s]
+        if len(specs) < 2:
+            continue
+        linked = [t for t in (br.get("lines") or []) if t in node_tags]
+        if by_spec and not any(s in by_spec for s in specs) and not linked:
+            continue
+        where = f" between {' and '.join(linked)}" if linked else ""
+        described = " and ".join(_spec_text(code, by_spec.get(code) or []) for code in specs)
+        spec_rows.append(row(
+            f"Piping class changes at the {' / '.join(specs)} spec break{where}.",
+            [f"{described}. The lower-rated class can see the upstream design pressure across this spec break."],
+            "S", relief_safeguards(ctx), 4, 2,
+            [ctx.recs.add(
+                f"Confirm the {' / '.join(specs)} spec break{where or ' in this node'} is on the correct side of the "
+                "pressure source and that the downstream class is rated for the upstream design pressure.")],
+        ))
+    if len(by_spec) > 1 and not spec_rows:
+        listing = "; ".join(_spec_text(code, tags) for code, tags in by_spec.items())
+        spec_rows.append(row(
+            f"This node contains more than one piping class ({listing}), and no spec break was read between them.",
+            ["The place where the piping class changes was not read, so the lower-rated line may see the higher-rated pressure."],
+            "S", [], 4, 2,
+            [ctx.recs.add("Mark the piping spec break on the P&ID and confirm the lower-rated class can withstand the upstream design pressure.")],
+        ))
+    for code, tags in by_spec.items():
+        if kb.spec(code):
+            continue
+        spec_rows.append(row(
+            f"Piping class {code} on {', '.join(tags[:4])} is not in the uploaded piping specification.",
+            ["Rating, material and temperature limits for this class were not available, so this line could not be checked against the specification."],
+            "A", [], 3, 2,
+            [ctx.recs.add(f"Add piping class {code} to the piping specification used for this study.")],
+        ))
+    if spec_rows:
+        node.setdefault("deviations", []).append({"deviation": "Piping Specification", "rows": spec_rows})
+
+    notes = [_spec_text(code, tags) for code, tags in by_spec.items()]
+    for br in ctx.ext.get("spec_breaks") or []:
+        specs = " / ".join(br.get("specs") or [])
+        linked = [t for t in (br.get("lines") or []) if t in node_tags]
+        if not specs:
+            continue
+        if by_spec and not any(s in by_spec for s in (br.get("specs") or [])) and not linked:
+            continue
+        notes.append("Spec break " + specs + (f" between {', '.join(linked)}" if linked else ""))
+    if notes:
+        extra = "Piping classes in this node: " + "; ".join(notes)
+        current = node.get("design_conditions") or ""
+        if extra not in current:
+            node["design_conditions"] = f"{current}; {extra}" if current and current != "Not shown on the P&ID." else extra
+    design = _design_conditions(ctx)
+    if design and design not in (node.get("design_conditions") or ""):
+        current = node.get("design_conditions") or ""
+        node["design_conditions"] = f"{design}. {current}".strip(". ") if current and current != "Not shown on the P&ID." else design
+
+
 def equipment_node(ctx, eq, nid):
     tag, kind = eq["tag"], eq["kind"]
     d = eq["design"]
@@ -286,9 +726,6 @@ def equipment_node(ctx, eq, nid):
         row(f"Loss of supply from {ctx.src_text()}.",
             [no_flow_cons, f"Loss of {ctx.fluid} supply to {ctx.dest_text()} (production loss)."],
             "S" if kind in ("heater", "pump", "compressor") else "A", sg_noflow, 4 if kind == "heater" else 3, 3, rec_flow),
-        row(f"Inadvertent closure of an isolation valve upstream / downstream of {tag}.",
-            ["As above.", f"Blocked-in {label}; pressure rise (refer High Pressure)."] if kind == "heater" else ["As above."],
-            "S" if kind == "heater" else "A", sg_noflow + relief_safeguards(ctx), 4 if kind == "heater" else 3, 2, rec_flow),
         row(f"{cv} fails closed or controller malfunction (refer control valve node).", ["As above."],
             "S" if kind == "heater" else "A", sg_noflow, 4 if kind == "heater" else 3, 3, rec_flow) if cv else None,
     ]))
@@ -474,7 +911,7 @@ def equipment_node(ctx, eq, nid):
     return {
         "id": str(nid),
         "title": f"{tag} {desc}".strip(),
-        "boundary": _boundary(ctx, tag, cv),
+        "boundary": _node_description(ctx),
         "design_intent": intent,
         "design_conditions": "; ".join(design) or "Not shown on the P&ID.",
         "deviations": [x for x in devs if x],
@@ -503,7 +940,7 @@ def control_valve_node(ctx, cvs, nid, heater):
              f"Blocked-in upstream equipment" + (f" ({heater['tag']} energized - refer {heater['tag']} node)." if heater else ".")],
             "A", controller_safeguard(ctx, var.upper()[0], "L") + ([sg("Manual bypass globe valve", ctx.names(bypass[:1]))] if bypass else [])
             + (trip_safeguards(ctx, "T", "H") if heater else []), 3, 3),
-        row(f"Isolation valve closed in error or check valve stuck closed.", ["As above."], "A",
+        row(_isolation_cause(ctx, cv.get("box"), tag), ["As above."], "A",
             controller_safeguard(ctx, var.upper()[0], "L"), 3, 2),
     ]))
 
@@ -580,7 +1017,7 @@ def control_valve_node(ctx, cvs, nid, heater):
     return {
         "id": str(nid),
         "title": f"{var.capitalize()} control valve {tag} and outlet to {ctx.dest_text()}",
-        "boundary": _boundary(ctx, tag, extra=(f" (with bypass {ctx.names(bypass[:1])})" if bypass else "")),
+        "boundary": _node_description(ctx),
         "design_intent": f"Control {var} using {tag}" + (f" ({ctx.tags(pic)})" if pic else "")
                          + (f", fail {'closed' if fail == 'FC' else 'open'}" if fail in ("FC", "FO") else "")
                          + f", and deliver {ctx.fluid} to {dest}.",
@@ -665,8 +1102,7 @@ def relief_node(ctx, nid, protected):
     return {
         "id": str(nid),
         "title": "Relief and depressuring to flare",
-        "boundary": f"Relief branch through {psv_tags}" + (f" and manual vent {ctx.names(vent[:1])}" if vent else "")
-                    + " to " + (", ".join(l["tag"] for l in ctx.flare_lines) or "the flare system") + ".",
+        "boundary": _node_description(ctx),
         "design_intent": f"Protect {prot} against overpressure and allow depressuring to the flare header.",
         "design_conditions": "; ".join(x for x in [
             psv_set,
@@ -684,6 +1120,189 @@ def _main_equipment(ext):
 
 _NODE_HEADER = re.compile(r"^(?:HAZOP\s+)?NODE(?:\s*(?:NO\.?|NUMBER))?\s*[-:#]?\s*(\d{1,3})\b\s*(.*)$")
 _NODE_SKIP = re.compile(r"^(REFER|SEE|FROM|TO|CONT|CONTINUED|NOTE|DWG)\b")
+_COLOR_NEAR = 0.035  # a line tag is on the coloured pipe when it sits on the stroke
+_EQUIP_NEAR = 0.06  # an equipment tag is drawn beside its vessel, not on the stroke
+_DEVICE_NEAR = 0.04  # instruments and valves sit on the coloured pipe
+_COLOR_LABEL = 0.15  # a NODE label claims the coloured mark nearest to it
+_ISOLATION = ("ball", "gate", "plug", "butterfly")
+
+
+def _color_name(rgb):
+    hue, _, _ = colorsys.rgb_to_hsv(*(rgb or (1, 0, 0)))
+    stops = (
+        (0.04, "red"), (0.10, "orange"), (0.18, "yellow"), (0.28, "lime"),
+        (0.42, "green"), (0.54, "cyan"), (0.70, "blue"), (0.82, "purple"), (0.93, "magenta"),
+    )
+    for limit, name in stops:
+        if hue < limit:
+            return name
+    return "red"
+
+
+def _point_seg(px, py, seg):
+    x0, y0, x1, y1 = seg
+    dx, dy = x1 - x0, y1 - y0
+    if dx == 0 and dy == 0:
+        return ((px - x0) ** 2 + (py - y0) ** 2) ** 0.5
+    t = max(0.0, min(1.0, ((px - x0) * dx + (py - y0) * dy) / (dx * dx + dy * dy)))
+    qx, qy = x0 + t * dx, y0 + t * dy
+    return ((px - qx) ** 2 + (py - qy) ** 2) ** 0.5
+
+
+def _nearest_color(point, colors):
+    px, py = point
+    best, dist = None, 1e9
+    for color in colors:
+        for seg in color.get("segments") or []:
+            d = _point_seg(px, py, seg)
+            if d < dist:
+                best, dist = color, d
+    return best, dist
+
+
+def _entity_points(ent):
+    boxes = list(ent.get("boxes") or [])
+    if ent.get("box"):
+        boxes.append(ent["box"])
+    return [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in boxes if b and len(b) == 4]
+
+
+def _color_nodes(ext):
+    """One HAZOP node per colour that a NODE label points at.
+
+    The colour is followed from the first stroke to the last. Every line, instrument,
+    valve and equipment item sitting on that colour belongs to the node.
+    """
+    colors = [c for c in (ext.get("node_colors") or []) if c.get("segments")]
+    raw = ext.get("tokens") or []
+    if not colors or not raw:
+        return None
+    scale = 10000
+    toks = [Tok({"text": t.get("text") or "", "box": [c * scale for c in t["box"]], "score": 1})
+            for t in raw if t.get("text") and t.get("box")]
+    headers = []
+    for ln in _text_lines(toks):
+        text = ln["text"].strip()
+        if len(text) > 80 or _NODE_SKIP.match(text):
+            continue
+        m = _NODE_HEADER.match(text)
+        if not m:
+            continue
+        box = ln["box"]
+        headers.append({
+            "number": int(m.group(1)),
+            "rest": m.group(2).strip(" -:."),
+            "point": ((box[0] + box[2]) / 2 / scale, (box[1] + box[3]) / 2 / scale),
+        })
+    if not headers:
+        return None
+
+    claimed = {}
+    for header in sorted(headers, key=lambda h: h["number"]):
+        color, dist = _nearest_color(header["point"], colors)
+        if color is None or dist > _COLOR_LABEL:
+            continue
+        hue = color.get("hue")
+        current = claimed.get(hue)
+        if current is None or dist < current["dist"]:
+            claimed[hue] = {"header": header, "color": color, "dist": dist}
+    if not claimed:
+        return None
+
+    catalog = []
+    for key, tag_key in (("equipment", "tag"), ("instruments", "tag"), ("lines", "tag"), ("valves", "code"),
+                         ("connectors", "tag"), ("spec_breaks", "tag")):
+        for ent in ext.get(key) or []:
+            tag = str(ent.get(tag_key) or "").strip().upper()
+            points = _entity_points(ent)
+            if tag and points:
+                catalog.append((tag, points, key))
+    lines_by_tag = {str(ln.get("tag") or "").upper(): ln for ln in ext.get("lines") or []}
+
+    owned = {hue: [] for hue in claimed}
+    for tag, points, key in catalog:
+        best_hue, best_dist = None, 1e9
+        for hue, slot in claimed.items():
+            segments = slot["color"].get("segments") or []
+            dist = min(_point_seg(px, py, seg) for px, py in points for seg in segments)
+            if dist < best_dist:
+                best_hue, best_dist = hue, dist
+        limit = _EQUIP_NEAR if key == "equipment" else _DEVICE_NEAR if key in ("instruments", "valves") else _COLOR_NEAR
+        if best_hue is not None and best_dist <= limit and tag not in owned[best_hue]:
+            owned[best_hue].append(tag)
+
+    neighbours = [("equipment", "tag"), ("instruments", "tag"), ("valves", "code")]
+    for key, tag_key in neighbours:
+        for ent in ext.get(key) or []:
+            if key == "equipment" and (ent.get("offpage") or ent.get("kind") in ("panel", "package")):
+                continue
+            tag = str(ent.get(tag_key) or "").upper()
+            points = _entity_points(ent)
+            if not tag or not points or any(tag in found for found in owned.values()):
+                continue
+            best_hue, best_dist = None, 1e9
+            for hue, found in owned.items():
+                for line_tag in found:
+                    line = lines_by_tag.get(line_tag)
+                    if not line:
+                        continue
+                    boxes = line.get("boxes") or ([line["box"]] if line.get("box") else [])
+                    for box in boxes:
+                        for px, py in points:
+                            dist = _point_box(px, py, box)
+                            if dist < best_dist:
+                                best_hue, best_dist = hue, dist
+            if best_hue is not None and best_dist <= _DEVICE_NEAR:
+                owned[best_hue].append(tag)
+
+    plan = []
+    for hue, slot in sorted(claimed.items(), key=lambda item: item[1]["header"]["number"]):
+        tags = owned[hue]
+        if not tags:
+            continue
+        header = slot["header"]
+        name = _color_name(slot["color"].get("rgb"))
+        title = f"Node {header['number']} - {name}"
+        if header["rest"] and not re.fullmatch(r"[\d\s]+", header["rest"]):
+            title = f"{title} - {header['rest']}"
+        plan.append({
+            "title": title,
+            "tags": tags,
+            "design_intent": "",
+            "color": name,
+            "number": header["number"],
+        })
+    claimed_numbers = {slot["header"]["number"] for slot in claimed.values()}
+    for header in headers:
+        if header["number"] in claimed_numbers:
+            continue
+        text_tags = _tags_near_header(ext, header["point"])
+        text_tags = [tag for tag in text_tags if not any(tag in found for found in owned.values())]
+        if not text_tags:
+            continue
+        title = f"Node {header['number']}"
+        if header["rest"] and not re.fullmatch(r"[\d\s]+", header["rest"]):
+            title = f"{title} - {header['rest']}"
+        plan.append({"title": title, "tags": text_tags, "design_intent": "", "number": header["number"]})
+    plan.sort(key=lambda item: item.get("number") or 0)
+    return plan or None
+
+
+def _tags_near_header(ext, point):
+    """Tags of the equipment, lines, instruments and valves next to a NODE label that has no colour."""
+    px, py = point
+    found = []
+    for key, tag_key in (("equipment", "tag"), ("lines", "tag"), ("instruments", "tag"), ("valves", "code")):
+        for ent in ext.get(key) or []:
+            if key == "equipment" and (ent.get("offpage") or ent.get("kind") in ("panel", "package")):
+                continue
+            tag = str(ent.get(tag_key) or "").strip().upper()
+            if not tag or tag in found:
+                continue
+            limit = 0.12 if key == "equipment" else 0.06
+            if any((px - x) ** 2 + (py - y) ** 2 <= limit ** 2 for x, y in _entity_points(ent)):
+                found.append(tag)
+    return found
 
 
 def _marked_nodes(ext):
@@ -741,9 +1360,28 @@ def _marked_nodes(ext):
         for _, tag in ranked:
             if tag not in out:
                 out.append(tag)
-            if len(out) == 3:
-                break
         return out
+
+    def expand(tags):
+        """Pull in every line, valve, instrument and equipment that sits with the tags already in the node."""
+        chosen = list(tags)
+        centers = [(x, y) for tag, (x, y), _ in known if tag in chosen]
+        for _ in range(2):
+            for tag, (x, y), ent in known:
+                if tag in chosen or ent.get("offpage"):
+                    continue
+                if any(((x - cx) ** 2 + (y - cy) ** 2) ** 0.5 <= 0.16 * scale for cx, cy in centers):
+                    chosen.append(tag)
+                    centers.append((x, y))
+        for br in ext.get("spec_breaks") or []:
+            tag = str(br.get("tag") or "").upper()
+            box = br.get("box")
+            if not tag or not box or tag in chosen:
+                continue
+            cx, cy = _center(box)
+            if any(((cx * scale - sx) ** 2 + (cy * scale - sy) ** 2) ** 0.5 <= 0.16 * scale for sx, sy in centers):
+                chosen.append(tag)
+        return chosen
 
     by_number = {}
     for i, h in enumerate(headers):
@@ -752,7 +1390,7 @@ def _marked_nodes(ext):
         y1 = below[0]["box"][1] if below else y0 + 0.18 * scale
         block = [ln["text"] for ln in lines
                  if y0 - 20 <= ln["box"][1] < y1 and abs(ln["box"][0] - h["box"][0]) < 0.2 * scale]
-        tags = mentioned(" ".join(block)) or nearest(h["box"])
+        tags = expand(mentioned(" ".join(block)) or nearest(h["box"]))
         slot = by_number.setdefault(h["number"], {"rest": h["rest"], "tags": []})
         if h["rest"] and not slot["rest"]:
             slot["rest"] = h["rest"]
@@ -769,7 +1407,7 @@ def _marked_nodes(ext):
         rest = slot["rest"]
         if rest and not re.fullmatch(r"[\d\s]+", rest):
             title = f"{title} - {rest}"
-        plan.append({"title": title, "tags": slot["tags"], "design_intent": ""})
+        plan.append({"title": title, "tags": slot["tags"], "design_intent": "", "number": number})
     return plan or None
 
 
@@ -810,11 +1448,13 @@ def _build(ctx, ext, entry, nid):
     tags = {t.strip().upper() for t in entry.get("tags") or [] if t and t.strip()}
     main_eq = _main_equipment(ext)
     heater = next((e for e in main_eq if e["kind"] in ("heater", "exchanger")), None)
-    eqs = [e for e in ext["equipment"] if e["tag"].upper() in tags and e["kind"] not in ("panel", "package")]
+    eqs = [e for e in ext["equipment"]
+           if not e.get("offpage") and e["kind"] not in ("panel", "package")
+           and (e["tag"].upper() in tags or entry.get("color"))]
     cvs = [i for i in ctx.find(cats=("control_valve",)) if i["tag"].upper() in tags]
     relief = any(i["tag"].upper() in tags for i in ctx.find(cats=("relief",))) or \
         any(l["tag"].upper() in tags for l in ctx.flare_lines)
-    lines = [l for l in ctx.process_lines if l["tag"].upper() in tags]
+    lines = [l for l in ctx.process_lines if l["tag"].upper() in tags] or list(ctx.process_lines)
 
     parts = [equipment_node(ctx, e, nid) for e in eqs]
     parts += [control_valve_node(ctx, [cv], nid, heater) for cv in cvs]
@@ -834,6 +1474,7 @@ def _build(ctx, ext, entry, nid):
         node["title"] = entry["title"].strip()
     if (entry.get("design_intent") or "").strip():
         node["design_intent"] = entry["design_intent"].strip()
+    _pinpoint_node(node, ctx, entry.get("color"))
     return node
 
 
@@ -841,7 +1482,7 @@ def plan_nodes(ext):
     """Proposed nodes for the user to review: title, the tags that anchor each node and its generated intent."""
     ctx = Ctx(ext)
     out = []
-    for i, entry in enumerate(_marked_nodes(ext) or _auto_plan(ctx, ext), 1):
+    for i, entry in enumerate(_color_nodes(ext) or _marked_nodes(ext) or _auto_plan(ctx, ext), 1):
         node = _build(ctx, ext, entry, i)
         out.append({"title": node["title"], "tags": entry["tags"], "design_intent": "",
                     "auto_intent": node["design_intent"]})
@@ -854,10 +1495,43 @@ def _center(box):
     return (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
 
 
-def _scope_extraction(ext, tags):
-    """Keep the tags of one part, plus whatever sits next to them on the drawing."""
+def _gather_along(ext, tags):
+    """From the tags already in the node, pull in every instrument, valve, line and equipment along them."""
+    chosen = []
+    for tag in tags or []:
+        text = str(tag).strip().upper()
+        if text and text not in chosen:
+            chosen.append(text)
+    index = []
+    for key, tag_key in (("equipment", "tag"), ("instruments", "tag"), ("lines", "tag"), ("valves", "code")):
+        for ent in ext.get(key) or []:
+            if key == "equipment" and ent.get("offpage"):
+                continue
+            tag = str(ent.get(tag_key) or "").strip().upper()
+            points = _entity_points(ent)
+            if tag and points:
+                index.append((tag, points))
+    for _ in range(3):
+        seeds = [point for tag, points in index if tag in chosen for point in points]
+        if not seeds:
+            break
+        for tag, points in index:
+            if tag in chosen:
+                continue
+            near = any((px - sx) ** 2 + (py - sy) ** 2 <= _DEVICE_NEAR ** 2
+                       for px, py in points for sx, sy in seeds)
+            if near:
+                chosen.append(tag)
+    return chosen
+
+
+def _scope_extraction(ext, tags, strict=False):
+    """Keep the tags of one part, plus whatever sits next to them on the drawing.
+
+    A colour node is already the full run of that colour, so nothing outside its tags is added.
+    """
     wanted = {str(t).strip().upper() for t in tags if t and str(t).strip()}
-    groups = ("equipment", "instruments", "lines", "valves", "connectors", "spec_breaks")
+    groups = ("equipment", "instruments", "lines", "valves", "connectors")
 
     def ident(ent):
         return str(ent.get("tag") or ent.get("code") or "").upper()
@@ -874,8 +1548,26 @@ def _scope_extraction(ext, tags):
 
     scoped = copy.deepcopy({k: ext.get(k) for k in ("flags", "token_count")})
     for key in groups:
-        scoped[key] = [ent for ent in ext.get(key) or [] if ident(ent) in wanted or close(ent.get("box"))]
+        scoped[key] = [
+            ent for ent in ext.get(key) or []
+            if ident(ent) in wanted or (not strict and close(ent.get("box")))
+        ]
     kept_lines = {str(ln.get("tag") or "").upper() for ln in scoped["lines"]}
+    node_specs = {str(ln.get("spec") or "").upper() for ln in scoped["lines"]}
+
+    def keep_break(br):
+        linked = {str(x).upper() for x in br.get("lines") or []}
+        tag = str(br.get("tag") or "").upper()
+        specs = {str(s).upper() for s in br.get("specs") or []}
+        if tag and tag in wanted:
+            return True
+        if linked & kept_lines:
+            return True
+        if specs and specs <= node_specs and (not strict or close(br.get("box"))):
+            return True
+        return not strict and close(br.get("box"))
+
+    scoped["spec_breaks"] = [br for br in ext.get("spec_breaks") or [] if keep_break(br)]
     scoped["connectors"] = [
         c for c in ext.get("connectors") or []
         if ident(c) in wanted or close(c.get("box")) or str(c.get("line") or "").upper() in kept_lines
@@ -916,8 +1608,12 @@ def _compile_parts(pieces, source):
             if note not in assumptions:
                 assumptions.append(note)
     study = dict((pieces[0].get("study") or {}) if pieces else {})
-    note = (f"The drawing was split into {len(pieces)} parts. Each part was studied on its own, "
-            "then the parts were compiled into this worksheet.")
+    if source == "color":
+        note = (f"The drawing was studied one node at a time ({len(pieces)} colour-marked nodes). "
+                "Each colour was followed from its start to its end, including the piping, instruments and valves on it.")
+    else:
+        note = (f"The drawing was split into {len(pieces)} parts. Each part was studied on its own, "
+                "then the parts were compiled into this worksheet.")
     return {"study": study, "nodes": nodes, "recommendations": recs, "assumptions": [note, *assumptions],
             "node_source": source}
 
@@ -947,9 +1643,30 @@ def _worksheet(ext, study, plan, source):
         ranking,
         "CC (Consequence Category): S = Safety / People, E = Environment, A = Asset / Production.",
         "Drain lines, vent lines and lines to safety valves are left out of the node description. They are not part of steady-state continuous operation.",
+        "The P&ID is read in full, every text from top to bottom and from left to right. "
+        "Node 1 is then read from its start to its end, and the same reading is repeated for every following node. "
+        "Instrument function is taken from the instrument legend, line number and insulation from the line designation, "
+        "components from the piping component legend and the component identifier, and equipment ratings from the piping specification. "
+        "A cause is what happens if an instrument on that line faults. The consequence follows from that cause. "
+        "The safeguard is what prevents the consequence. Design conditions are the specification of the main equipment.",
     ]
+    classes = list(kb.specs())
+    if classes:
+        shown = ", ".join(classes[:12])
+        more = "…" if len(classes) > 12 else ""
+        origin = "uploaded piping specification" if kb.has_project_specs() else "piping specification"
+        purposes = " ".join(item["purpose"] for item in kb.learn_piping()[:4])
+        assumptions.append(
+            f"The {origin} was read and learned first, before the PFD and before any P&ID page was opened "
+            f"({len(classes)} classes: {shown}{more}). {purposes}"
+        )
     if source == "user":
-        assumptions.append("HAZOP nodes and their boundaries were defined by the user before the worksheet was generated.")
+        assumptions.append("HAZOP nodes were defined by the user before the worksheet was generated. Each node was then studied from its start to its end.")
+    elif source == "color":
+        assumptions.append(
+            "Each node is one colour marked against a node number on the P&ID. "
+            "That colour was followed from its start to its end, and the piping, instruments and valves on it were studied together."
+        )
     elif source == "drawing":
         assumptions.append("HAZOP nodes were taken from the node numbers already marked on this sheet.")
     offpage = [e["tag"] for e in ext["equipment"] if e["offpage"]]
@@ -973,19 +1690,62 @@ def _worksheet(ext, study, plan, source):
     }
 
 
-def generate(ext, study=None, user_nodes=None, on_part=None):
-    """Split the drawing into parts, study each part on its own, then compile one worksheet.
+def _plan_key(entry, index):
+    """Node 1, then node 2, then node 3. Entries without a number keep their reading order after those."""
+    number = entry.get("number")
+    try:
+        return (0, int(number), index)
+    except (TypeError, ValueError):
+        match = re.search(r"\bNode\s+(\d+)\b", str(entry.get("title") or ""), re.I)
+        if match:
+            return (0, int(match.group(1)), index)
+        return (1, index, 0)
 
-    on_part(index, count, entry) is called before each part when there is more than one.
+
+def study_plan(ext, user_nodes=None):
+    """Read every node on the drawing, then return them in node-number order."""
+    colored = None if user_nodes else _color_nodes(ext)
+    marked = None if user_nodes or colored else _marked_nodes(ext)
+    plan = user_nodes if user_nodes else (colored or marked or _auto_plan(Ctx(ext), ext))
+    source = "user" if user_nodes else ("color" if colored else "drawing" if marked else "auto")
+
+    def one(entry):
+        entry = dict(entry)
+        # A colour node is already the run of that colour. Gathering by distance pulls in the rest of the sheet.
+        if not entry.get("color"):
+            entry["tags"] = _gather_along(ext, entry.get("tags") or [])
+        return entry
+
+    plan = [one(entry) for entry in plan]
+    if not user_nodes:
+        plan = [entry for _, entry in sorted(enumerate(plan), key=lambda pair: _plan_key(pair[1], pair[0]))]
+    return plan, source
+
+
+def generate(ext, study=None, user_nodes=None, on_part=None, on_plan=None, prepared=None):
+    """Read the nodes, then write the worksheet for one node at a time in node-number order.
+
+    on_plan(plan) runs once the nodes have been read and ordered, before the first node is written.
+    on_part(index, count, entry) runs before each node when there is more than one.
+    prepared is (plan, source) when the caller already read and ordered the nodes.
     """
-    marked = None if user_nodes else _marked_nodes(ext)
-    plan = user_nodes if user_nodes else (marked or _auto_plan(Ctx(ext), ext))
-    source = "user" if user_nodes else ("drawing" if marked else "auto")
+    if prepared:
+        plan, source = prepared
+    else:
+        plan, source = study_plan(ext, user_nodes)
+        if on_plan:
+            on_plan(plan)
     if len(plan) <= 1:
-        return _worksheet(ext, study, plan, source)
+        scoped = ext
+        if plan and plan[0].get("color"):
+            scoped = _scope_extraction(ext, plan[0].get("tags") or [], strict=True)
+        return _worksheet(scoped, study, plan, source)
     pieces = []
     for i, entry in enumerate(plan, 1):
         if on_part:
             on_part(i, len(plan), entry)
-        pieces.append(_worksheet(_scope_extraction(ext, entry.get("tags") or []), study, [entry], source))
+        pieces.append(_worksheet(
+            _scope_extraction(ext, entry.get("tags") or [], strict=bool(entry.get("color"))),
+            study, [entry], source,
+        ))
     return _compile_parts(pieces, source)

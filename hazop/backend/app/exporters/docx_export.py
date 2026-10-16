@@ -225,7 +225,7 @@ def build_docx(result):
             b.page_break()
         b.heading(f"Node {node['id']}: {node['title']}", size=12)
         b.info_table([
-            ("Node boundary", node.get("boundary", "")),
+            ("Node description", node.get("boundary", "")),
             ("Design intent", node.get("design_intent", "")),
             ("Design conditions", node.get("design_conditions", "")),
         ])
