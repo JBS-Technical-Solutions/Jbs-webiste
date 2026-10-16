@@ -726,6 +726,7 @@ def _review_with_model(job_id, result, ext, page, warnings):
     notes = reviewed.setdefault("assumptions", [])
     if note not in notes:
         notes.append(note)
+    job["_analysis_label"] = (reviewed.get("study") or {}).get("analysis") or "AI-assisted"
     return reviewed
 
 
@@ -819,7 +820,7 @@ def _analyse(job_id):
             if not result["study"].get("drawing"):
                 result["study"]["drawing"] = job["filename"]
             result["study"]["reference_documents"] = _references(job)
-            result["study"]["analysis"] = "Rule-based engine"
+            result["study"]["analysis"] = job.get("_analysis_label") or "Rule-based engine"
             notes = result.setdefault("assumptions", [])
             if job.get("_pfd_note") and job["_pfd_note"] not in notes:
                 notes.append(job["_pfd_note"])
@@ -850,7 +851,7 @@ def _analyse(job_id):
             "timings": timings,
         }
         with _lock:
-            for key in ("_page", "_ext", "_optional", "_pending", "_image", "_pfd_note", "_pfd_study", "_purpose", "_matrix_note"):
+            for key in ("_page", "_ext", "_optional", "_pending", "_image", "_pfd_note", "_pfd_study", "_purpose", "_matrix_note", "_analysis_label"):
                 job.pop(key, None)
         _update(job_id, status="done", stage="done", progress=1.0, detail=None, result=payload, warnings=warnings,
                 finished=time.time())
