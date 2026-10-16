@@ -498,10 +498,11 @@ def relief_safeguards(ctx):
 
 
 def check_safeguards(ctx):
-    out = [sg("Check valve", i["tag"], strong=True) for i in ctx.find(letters=("FSV",))]
+    found = [i for i in ctx.instruments if str(i.get("letters") or "").startswith("FSV") or i.get("category") == "safety"]
+    out = [sg(f"{i['tag']} check valve", i["tag"], strong=True) for i in found]
     if not out:
-        for v in ctx.valves_of("check")[:2]:
-            out.append(sg(f"Check valve {v['size'] or ''} {v['code']}".replace("  ", " "), v["code"], strong=True))
+        for v in ctx.valves_of("check")[:4]:
+            out.append(sg(f"Check valve {v.get('code')}", v["code"], strong=True))
     return out
 
 
@@ -901,7 +902,19 @@ def equipment_node(ctx, eq, nid):
     }.get(kind, f"Loss of flow through {tag}.")
     temp_trips = trip_safeguards(ctx, "T", "H")
     flow_trips = trip_safeguards(ctx, "F", "L")
-    sg_noflow = flow_trips + (skin_safeguards(ctx) + temp_trips if kind == "heater" else []) + shutdown_alarms(ctx)
+    low_pressure = trip_safeguards(ctx, "P", "L")
+    high_level = trip_safeguards(ctx, "L", "H")
+    sg_noflow = low_pressure + flow_trips + (skin_safeguards(ctx) + temp_trips if kind == "heater" else []) + shutdown_alarms(ctx)
+    cv_var = str((cvs[0].get("letters") if cvs else "") or "")[:1]
+    if cv_var == "L":
+        closed_sg = high_level or sg_noflow
+        open_sg = trip_safeguards(ctx, "L", "L") + low_pressure
+    elif cv_var == "P":
+        closed_sg = low_pressure + flow_trips
+        open_sg = relief_safeguards(ctx) + trip_safeguards(ctx, "P", "H")
+    else:
+        closed_sg = sg_noflow
+        open_sg = trip_safeguards(ctx, "T", "L") + low_pressure
     rec_flow = []
     if kind in ("heater", "pump", "compressor") and not flow_trips:
         panel = next((e["tag"] for e in ctx.equipment if e["kind"] == "panel"), f"the {label} control system")
@@ -913,7 +926,7 @@ def equipment_node(ctx, eq, nid):
             [no_flow_cons, f"Loss of {ctx.fluid} supply to {ctx.dest_text()} (production loss)."],
             "S" if kind in ("heater", "pump", "compressor") else "A", sg_noflow, 4 if kind == "heater" else 3, 3, rec_flow),
         row(f"{cv} fails closed or controller malfunction (refer control valve node).", ["As above."],
-            "S" if kind == "heater" else "A", sg_noflow, 4 if kind == "heater" else 3, 3, rec_flow) if cv else None,
+            "S" if kind == "heater" else "A", closed_sg, 4 if kind == "heater" else 3, 3, rec_flow) if cv else None,
     ]))
 
     if cv:
@@ -923,7 +936,7 @@ def equipment_node(ctx, eq, nid):
                 }.get(kind, f"Throughput above {label} design rate.")
         devs.append(dev("More Flow", [
             row(f"{cv} fails open / controller malfunction.", [more], "S" if kind == "heater" else "A",
-                controller_safeguard(ctx, "T") + trip_safeguards(ctx, "T", "L"), 3, 2),
+                open_sg, 3, 2),
         ]))
 
     # ---- reverse flow
@@ -933,12 +946,19 @@ def equipment_node(ctx, eq, nid):
                     [] if check_safeguards(ctx) else [ctx.recs.add(f"Provide a check valve on the outlet of {tag} to prevent reverse flow.")])]
     if len(ctx.sources) >= 2:
         names = " and ".join(c["description"] + (f" ({c['line']})" if c["line"] else "") for c in ctx.sources)
-        rev_rows.append(row(
-            f"Pressure imbalance between inlet sources {names}; the sources join with no check valves shown on this P&ID.",
+        checks = check_safeguards(ctx)
+        if checks:
+            cause = f"One inlet check valve fails open while the sources {names} are at different pressures."
+            safeguards = checks
+            recs = []
+        else:
+            cause = f"Pressure imbalance between inlet sources {names}; the sources join with no check valves shown on this P&ID."
+            safeguards = []
+            recs = [ctx.recs.add(f"Verify on upstream drawings that check valves are provided on each incoming line ({names}) and that "
+                                 f"each source is rated for the maximum pressure of the other.")]
+        rev_rows.append(row(cause,
             ["Higher-pressure source backflows into the lower-pressure source; possible overpressure / contamination of upstream equipment."],
-            "S", [], 4, 2,
-            [ctx.recs.add(f"Verify on upstream drawings that check valves are provided on each incoming line ({names}) and that "
-                          f"each source is rated for the maximum pressure of the other.")]))
+            "S", safeguards, 4, 2, recs))
     devs.append(dev("Reverse Flow", rev_rows))
 
     # ---- high pressure
@@ -1123,15 +1143,18 @@ def control_valve_node(ctx, cvs, nid, heater):
     down_des = (_nearest_large(ctx, cv.get("box"), 1) or {}).get("design") or {}
     devs = []
 
+    var0 = (var or "P").upper()[:1]
+    loss_sg = (trip_safeguards(ctx, "L", "H") if var0 == "L" else trip_safeguards(ctx, "P", "L") + trip_safeguards(ctx, "F", "L"))
+    open_sg = relief_safeguards(ctx) + (trip_safeguards(ctx, "L", "L") if var0 == "L" else trip_safeguards(ctx, "P", "H"))
     devs.append(dev("No / Less Flow", [
         row(f"{tag} {fail_txt if fail == 'FC' else 'fails closed'} on the {ctx.fluid} line from {up_name} to {down_name}.",
             [f"Flow of {ctx.fluid} from {up_name} to {down_name} stops. {down_name} loses supply and {dest} is starved.",
              f"{up_name} can be blocked in" + (f" while {heater['tag']} stays energised." if heater else ".")],
-            "A", controller_safeguard(ctx, var.upper()[0], "L") + ([sg("Manual bypass globe valve", ctx.names(bypass[:1]))] if bypass else [])
+            "A", loss_sg + ([sg("Manual bypass globe valve", ctx.names(bypass[:1]))] if bypass else [])
             + (trip_safeguards(ctx, "T", "H") if heater else []), 3, 3),
         row(_isolation_cause(ctx, cv.get("box"), tag),
             [f"The same loss of {ctx.fluid} from {up_name} to {down_name}."], "A",
-            controller_safeguard(ctx, var.upper()[0], "L"), 3, 2),
+            loss_sg, 3, 2),
     ]))
 
     limit = f" above its design pressure of {down_des['p_des']} psig" if down_des.get("p_des") else " above its design pressure"
@@ -1148,14 +1171,14 @@ def control_valve_node(ctx, cvs, nid, heater):
     if heater:
         hp_cons.append(f"High flow exceeds {heater['tag']} capacity - low temperature (refer Low Temperature).")
     more_rows = [row(f"{tag} fails open on the {ctx.fluid} line from {up_name} to {down_name}.", hp_cons, "S",
-                     controller_safeguard(ctx, var.upper()[0], "H") + trip_safeguards(ctx, "P", "H"), 5, 3,
+                     open_sg, 5, 3,
                      [ctx.recs.add(f"Verify that the relief device(s) on {dest_eq} are sized for gas blow-by through fully open {tag}"
                                    + (f" plus its bypass {ctx.names(bypass[:1])}" if bypass else "")
                                    + " at maximum upstream pressure; if not, consider a PSHH tripping an upstream SDV (subject to SIL assessment).")])]
     if bypass:
         more_rows.append(row(f"{tag} bypass globe valve {ctx.names(bypass[:1])} opened in error or left open after maintenance.",
                              [f"Uncontrolled flow bypassing {tag}; high pressure at {dest_eq} (as above, smaller magnitude)."], "S",
-                             controller_safeguard(ctx, var.upper()[0], "H"), 4, 2,
+                             open_sg, 4, 2,
                              [ctx.recs.add(f"Lock closed (LC) the {tag} bypass valve {ctx.names(bypass[:1])} and include it in the lock / car-seal register.")]))
     devs.append(dev("More Flow / High Pressure", more_rows))
 
@@ -1164,7 +1187,7 @@ def control_valve_node(ctx, cvs, nid, heater):
                                          check_safeguards(ctx), 3, 2)]))
     devs.append(dev("Low Pressure", [row(f"{tag} closes or upstream supply is lost; high demand from downstream users.",
                                          [f"Low pressure at {dest}; trip of downstream users."], "A",
-                                         controller_safeguard(ctx, var.upper()[0], "L"), 2, 3)]))
+                                         controller_safeguard(ctx, var.upper()[0], "L") + trip_safeguards(ctx, "P", "L"), 2, 3)]))
 
     if ctx.gas:
         tsl = trip_safeguards(ctx, "T", "L")
@@ -1258,7 +1281,8 @@ def relief_node(ctx, nid, protected):
     devs.append(dev("More Flow (Passing / Open Vent)", [row(
         f"{psv_tags} passing / leaking" + (f", or manual vent {ctx.names(vent[:1])} left open or passing." if vent else "."),
         ["Continuous loss of gas to flare - flaring, environmental impact, gas loss.", "Severe JT cooling in the flare tail pipe (refer Low Temperature)."],
-        "E", [sg("Flare line temperature indication with low alarm", ctx.tags(flare_ti[:1]) + " (L)")] if flare_ti else [], 3, 3)]))
+        "E", ([sg("Flare line temperature indication with low alarm", ctx.tags(flare_ti[:1]) + " (L)")] if flare_ti else [])
+        + trip_safeguards(ctx, "P", "L"), 3, 3)]))
     if header or ctx.flare_dests:
         hdr = header["tag"] if header else ctx.flare_dests[0]["description"]
         devs.append(dev("High Pressure (Back Pressure)", [row(
@@ -1276,7 +1300,8 @@ def relief_node(ctx, nid, protected):
             cons.append(f"{ctx.proc_spec['spec']} piping (minimum {ctx.proc_spec['min_temp_f']} {DEG}) between the valve outlet and the "
                         f"{ctx.proc_spec['spec']} / {fs['spec']} spec break may be exposed to low temperature.")
         sgs = ([sg("Flare line temperature indication with low alarm", ctx.tags(flare_ti[:1]) + " (L)")] if flare_ti else []) + \
-              ([sg(f"{fs['spec']} {fs['material'].split(' - ')[-1]} ({fs['min_temp_f']} {DEG})", f"{fs['spec']} spec")] if fs else [])
+              ([sg(f"{fs['spec']} {fs['material'].split(' - ')[-1]} ({fs['min_temp_f']} {DEG})", f"{fs['spec']} spec")] if fs else []) + \
+              trip_safeguards(ctx, "T", "L")
         devs.append(dev("Low Temperature", [row(
             f"{psv_tags} lifting / passing" + (f", or manual depressuring through {ctx.names(vent[:1])}" if vent else "")
             + " from high pressure to flare pressure.", cons, "S", sgs, 5, 3,
@@ -1723,7 +1748,7 @@ def _is_safeguard_instrument(inst):
     head = str(inst.get("tag") or "").split("-")[0]
     if inst.get("category") in ("relief", "trip", "alarm", "switch", "safety"):
         return True
-    return letters in _RELIEF_LETTERS or letters in _SHUTDOWN_LETTERS or head in _SHUTDOWN_LETTERS
+    return letters in _RELIEF_LETTERS or letters in _SHUTDOWN_LETTERS or head in _SHUTDOWN_LETTERS or letters.startswith("FSV")
 
 
 def _is_safeguard_valve(valve):
