@@ -201,14 +201,70 @@ def _line_function(line):
     return ", ".join(parts)
 
 
+_LARGE_KINDS = {"vessel", "exchanger", "heater", "pump", "compressor", "tank"}
+_KIND_PHRASE = {
+    "exchanger": "heat exchanger", "heater": "heater", "vessel": "separator",
+    "pump": "pump", "compressor": "compressor", "tank": "tank",
+}
+
+
+def _large_equipment(ctx):
+    return [e for e in _reading_order(ctx.equipment) if not e.get("offpage") and e.get("kind") in _LARGE_KINDS and e.get("box")]
+
+
+def _cx(item):
+    box = item.get("box") or [0, 0, 0, 0]
+    return (box[0] + box[2]) / 2
+
+
+def _and(parts):
+    parts = [p for p in parts if p]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def _join_tags(tags):
+    tags = [t for t in tags if t]
+    if len(tags) <= 1:
+        return tags[0] if tags else ""
+    matched = [re.match(r"^(.*?)([A-Z]\d+)$", tag) for tag in tags]
+    if all(matched) and len({item.group(1) for item in matched}) == 1:
+        return matched[0].group(1) + matched[0].group(2) + "/" + "/".join(item.group(2) for item in matched[1:])
+    return ", ".join(tags)
+
+
+def _eq_phrase(eq):
+    return f"{_KIND_PHRASE.get(eq.get('kind'), 'equipment')} {eq.get('tag')}"
+
+
+def _conn_name(conn):
+    text = re.sub(r"(?i)^(from|to)\s+", "", str(conn.get("description") or "")).strip(" .")
+    return re.sub(r"\s+", " ", text).lower() or "the connector"
+
+
+def _soft(text):
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    return text.lower() if text.isupper() else text
+
+
+def _place_name(name):
+    name = (name or "").strip()
+    if not name:
+        return "downstream"
+    return name if name.lower().startswith("the ") else f"the {name}"
+
+
 def _design_conditions(ctx):
-    """Specification of the main equipment, from the drawing and the piping specification."""
-    mains = [e for e in _reading_order(ctx.equipment) if not e.get("offpage") and e.get("kind") not in ("panel", "package")]
+    """Design and operating conditions of the main equipment, taken from the P&ID."""
+    from .parse import _harvest_design
+    _harvest_design(ctx.equipment, ctx.ext.get("tokens") or [])
     sentences = []
-    spec = ctx.proc_spec
-    for eq in mains[:6]:
+    for eq in _large_equipment(ctx)[:6]:
         d = eq.get("design") or {}
-        bits = [_equipment_function(eq, ctx).split(" is trying to ")[0]]
+        bits = []
         if d.get("p_des"):
             bits.append(f"design pressure {d['p_des']} psig")
         if d.get("p_op"):
@@ -217,38 +273,100 @@ def _design_conditions(ctx):
             bits.append(f"design temperature {d['t_des']} {DEG}")
         if d.get("t_op") is not None:
             bits.append(f"operating temperature {d['t_op']} {DEG}")
-        if spec:
-            bits.append(
-                f"piping class {spec.get('spec')} {spec.get('rating') or ''}, {spec.get('material') or ''}, "
-                f"{spec.get('rating_psig') or '-'} psig, {spec.get('min_temp_f')} to {spec.get('max_temp_f')} {DEG}".strip()
-            )
-        sentences.append(", ".join(bit for bit in bits if bit))
-    return "; ".join(sentences)
+        if bits:
+            sentences.append(f"{eq['tag']}: " + ", ".join(bits))
+        else:
+            sentences.append(f"{eq['tag']}: design and operating conditions are not shown on the P&ID")
+    return ". ".join(sentences)
 
 
-def _equipment_function(eq, ctx):
-    prefix = re.match(r"[A-Z]+", str(eq.get("tag") or ""))
-    decoded = kb.decode_equipment(prefix.group()) if prefix else None
-    name = (eq.get("description") or decoded or KIND_LABEL.get(eq.get("kind"), "equipment")).strip()
-    identity = f"{decoded}; " if decoded and decoded.lower() not in name.lower() else ""
-    return f"{eq.get('tag')} ({identity}{name}) is trying to {_equipment_duty(eq, ctx)}"
+def _overall_intent(ctx):
+    """One sentence for what this node is there to do."""
+    fluid = ctx.fluid
+    large = _large_equipment(ctx)
+    valves = _reading_order(ctx.find(cats=("control_valve",)))
+    exchangers = [e for e in large if e.get("kind") == "exchanger"]
+    heaters = [e for e in large if e.get("kind") == "heater"]
+    vessels = [e for e in large if e.get("kind") == "vessel"]
+    compressors = [e for e in large if e.get("kind") == "compressor"]
+    pumps = [e for e in large if e.get("kind") == "pump"]
+    pressure_valves = [v for v in valves if str(v.get("letters") or "").startswith("P")]
+    clauses = []
+    if exchangers and pressure_valves and not heaters and not compressors:
+        through = _and([e["tag"] for e in exchangers] + [_join_tags([v["tag"] for v in pressure_valves])])
+        clauses.append(f"reduce the {fluid} pressure and temperature through {through}")
+    else:
+        if exchangers:
+            clauses.append(f"reduce the {fluid} temperature through {_and([e['tag'] for e in exchangers])}")
+        if heaters:
+            clauses.append(f"heat the {fluid} through {_and([e['tag'] for e in heaters])}")
+        if pressure_valves:
+            clauses.append(f"reduce the {fluid} pressure through {_join_tags([v['tag'] for v in pressure_valves])}")
+        if compressors:
+            clauses.append(f"raise the {fluid} pressure in {_and([e['tag'] for e in compressors])}")
+    if vessels:
+        clauses.append(f"remove the condensate through {_and([e['tag'] for e in vessels])}")
+    elif pumps:
+        clauses.append(f"transfer the {fluid} with {_and([e['tag'] for e in pumps])}")
+    if not clauses:
+        return f"To move {fluid} from {ctx.src_text()} to {ctx.dest_text()}."
+    return "To " + clauses[0] + "".join(f", and {clause}" for clause in clauses[1:]) + "."
 
 
 def _node_description(ctx, color=None):
-    """Node description: start at the inlet, then every element in reading order and what it is for."""
-    start = ctx.node_start()
-    equipment = [e for e in _reading_order(ctx.equipment) if not e.get("offpage") and e.get("kind") not in ("panel", "package")]
-    lines = [ln for ln in _reading_order(ctx.process_lines)]
-    instruments = _reading_order(ctx.instruments)
-    valves = _reading_order(ctx.valves)
-    parts = [_equipment_function(eq, ctx) for eq in equipment[:8]]
-    parts += [_line_function(ln) for ln in lines[:8]]
-    parts += [f"{inst.get('tag')} is trying to {_instrument_duty(inst)}" for inst in instruments[:10]]
-    parts += [f"{valve.get('code')} is trying to {_valve_duty(valve)}" for valve in valves[:8]]
-    listed = "; ".join(parts) if parts else "no equipment, line or instrument was read inside this node"
-    text = f"The node starts at {start}. Read from that start to the end of the node: {listed}."
+    """A short route summary: where the line comes from, what it passes, and where it goes."""
+    fluid = ctx.fluid
+    large = _large_equipment(ctx)
+    vessels = [e for e in large if e.get("kind") == "vessel"]
+    target = vessels[0] if vessels else (large[-1] if large else None)
+    sources = _reading_order(ctx.sources)
+    valves = _reading_order(ctx.find(cats=("control_valve",)))
+    sentences = []
+    if not sources and large:
+        sources = [{"description": _eq_phrase(large[0]), "box": large[0].get("box"), "_skip": large[0]["tag"]}]
+    end_x = _cx(target) if target else 1
+
+    def _on_this_inlet(item, source):
+        if source.get("_skip") and item.get("tag") == source.get("_skip"):
+            return False
+        if target and item.get("tag") == target.get("tag"):
+            return False
+        x = _cx(item)
+        if x < _cx(source) - 0.02 or x > end_x + 0.02:
+            return False
+        nearest = min(sources, key=lambda s: abs(((s.get("box") or [0, 0, 0, 0])[1] + (s.get("box") or [0, 1, 0, 1])[3]) / 2 - ((item.get("box") or [0, 0, 0, 0])[1] + (item.get("box") or [0, 1, 0, 1])[3]) / 2))
+        return nearest is source
+
+    for index, source in enumerate(sources[:4]):
+        through = [_eq_phrase(eq) for eq in large if _on_this_inlet(eq, source)]
+        on_path = [v for v in valves if _on_this_inlet(v, source)]
+        if on_path:
+            through.append(_join_tags([v.get("tag") for v in on_path]))
+        lead = f"{fluid.capitalize()} line" if index == 0 else f"Another {fluid} line"
+        origin = _conn_name(source)
+        if through and target:
+            sentences.append(f"{lead} from {origin} going through {', '.join(through)} to {target['tag']}.")
+        elif target:
+            sentences.append(f"{lead} from {origin} going to {target['tag']}.")
+        elif through:
+            sentences.append(f"{lead} from {origin} going through {', '.join(through)}.")
+        else:
+            sentences.append(f"{lead} from {origin}.")
+    if vessels:
+        liquid = [c for c in ctx.dests if any(word in _conn_name(c) for word in ("separat", "liquid", "oil", "condensate", "water"))]
+        chosen = liquid or list(ctx.dests)
+        if chosen:
+            places = _and([_place_name(_conn_name(c)) for c in chosen[:3]])
+            sentences.append(
+                f"{vessels[0]['tag']} separates the liquid from vapor and liquid flows through the outlet liquid line going to {places}."
+            )
+        else:
+            sentences.append(f"{vessels[0]['tag']} separates the liquid from vapor.")
+    elif not sentences:
+        sentences.append(f"{fluid.capitalize()} from {ctx.src_text()} to {ctx.dest_text()}.")
+    text = " ".join(sentences)
     if color:
-        text += f" The {color} marking was followed from its start to its end."
+        text += f" The {color} node line was followed for this summary."
     return text
 
 
@@ -528,108 +646,148 @@ def _instrument_row(node, ctx, inst):
     )
 
 
-def _component_rows(node, ctx):
-    """Write each cause from the duty of that valve or equipment item."""
-    for valve in _reading_order(ctx.valves):
-        code = valve.get("code") or "valve"
-        duty = _valve_duty(valve)
-        line = _nearest_line(ctx.lines, valve.get("box"), limit=None)
-        where = f" on {line['tag']}" if line else ""
-        kind = str(valve.get("type") or "").lower()
-        if kind.startswith("check"):
-            others = [v for v in ctx.valves if v is not valve and str(v.get("type") or "").lower().startswith("check")]
-            _place_row(
-                node, "Reverse Flow",
-                f"{code} fails open{where}. Its duty is to {duty}.",
-                [f"Reverse flow passes {code}{where} into the upstream side."],
-                [sg(f"Second check valve {v['code']}", v["code"], strong=True) for v in others[:2]],
-                3, 2,
-                [] if others else [ctx.recs.add(f"Confirm a check valve remains on the line through {code} to {duty}.")],
-            )
-        elif kind.startswith("globe"):
-            _place_row(
-                node, "More Flow",
-                f"{code} is opened{where}. Its duty is to {duty}.",
-                [f"Flow{where} is no longer throttled by {code} and can exceed the intended rate."],
-                controller_safeguard(ctx, "F"),
-                3, 2,
-            )
-        elif kind.startswith("needle"):
-            _place_row(
-                node, "Maintenance / Isolation",
-                f"{code} is left open{where}. Its duty is to {duty}.",
-                [f"A continuous release of {ctx.release} leaves through {code}."],
-                [sg(f"Normally closed {code}", code)] if set(valve.get("attributes") or []) & {"NC", "CSC", "LC"} else [],
-                3, 2,
-            )
-        elif set(valve.get("attributes") or []) & {"CSC", "LC", "NC"}:
-            _place_row(
-                node, "More Flow",
-                f"{code} is opened{where}. Its duty is to {duty}.",
-                [f"A path that {code} is meant to keep isolated starts passing flow{where}."],
-                [sg(f"Car seal or lock closed on {code}", code)],
-                3, 2,
-            )
-        else:
-            held = set(valve.get("attributes") or []) & {"CSO", "LO", "NO"}
-            _place_row(
-                node, "No / Less Flow",
-                f"{code} is closed{where}. Its duty is to {duty}.",
-                [f"Flow stops{where} at {code} only. Piping upstream of {code} can be blocked in."],
-                ([sg(f"Car seal open on {code}", code)] if held else []) + trip_safeguards(ctx, "F", "L") + relief_safeguards(ctx),
-                3, 2,
-            )
+def _nearest_large(ctx, box, side=0):
+    """side -1 is upstream (to the left), +1 is downstream, 0 is the nearest."""
+    items = _large_equipment(ctx)
+    if not items:
+        return None
+    if not box:
+        return items[0]
+    cx = (box[0] + box[2]) / 2
+    if side < 0:
+        left = [e for e in items if _cx(e) < cx - 0.005]
+        return left[-1] if left else None
+    if side > 0:
+        right = [e for e in items if _cx(e) > cx + 0.005]
+        return right[0] if right else None
+    return min(items, key=lambda e: abs(_cx(e) - cx))
 
-    for eq in _reading_order(ctx.equipment):
-        if eq.get("offpage") or eq.get("kind") in ("panel", "package"):
+
+def _equip_name(eq, fallback):
+    if not eq:
+        return fallback
+    desc = str(eq.get("description") or "").strip()
+    if desc and eq.get("tag") and eq["tag"] not in desc:
+        return f"{desc} {eq['tag']}"
+    return eq.get("tag") or fallback
+
+
+def _linked_valves(ctx, inst):
+    loop = str(inst.get("loop") or "")
+    if not loop:
+        return []
+    return [v for v in ctx.find(cats=("control_valve",)) if str(v.get("loop") or "") == loop or str(v.get("number") or "").startswith(loop)]
+
+
+def _limit_word(letters):
+    rest = str(letters or "")[1:]
+    var = {"P": "pressure", "T": "temperature", "L": "level", "F": "flow"}.get(str(letters or "")[:1], "process condition")
+    if "L" in rest and "H" not in rest:
+        return "low", var
+    if "H" in rest:
+        return "high", var
+    return "", var
+
+
+def _named_safeguards(ctx, inst):
+    """The devices on this node that still act if this instrument fails."""
+    letters = str(inst.get("letters") or "")
+    var = letters[:1]
+    out = []
+    for other in _reading_order(ctx.instruments):
+        if other is inst or other.get("tag") == inst.get("tag"):
             continue
-        duty = _equipment_duty(eq, ctx)
-        tag = eq["tag"]
-        kind = eq.get("kind")
-        if kind == "pump":
-            safeguards = trip_safeguards(ctx, "F", "L")
-            effect = f"{tag} no longer moves {ctx.fluid}. The pump can run dry and the downstream supply is lost."
-        elif kind == "compressor":
-            safeguards = trip_safeguards(ctx, "F", "L") + trip_safeguards(ctx, "P", "H")
-            effect = f"{tag} no longer raises the pressure of {ctx.fluid}. The machine can surge and downstream pressure falls."
-        elif kind == "heater":
-            safeguards = trip_safeguards(ctx, "T", "H") + skin_safeguards(ctx)
-            effect = f"{tag} no longer heats {ctx.fluid}, or it stays energised with no flow and the element overheats."
-        elif kind in ("vessel", "tank"):
-            safeguards = trip_safeguards(ctx, "L", "H") + trip_safeguards(ctx, "L", "L")
-            effect = f"{tag} no longer holds the liquid and gas apart. Liquid can carry over, or gas can blow through to the liquid outlet."
-        elif kind == "exchanger":
-            safeguards = trip_safeguards(ctx, "T", "H") + trip_safeguards(ctx, "T", "L")
-            effect = f"{tag} no longer transfers heat. The outlet temperature of {ctx.fluid} leaves its intended range."
+        if str(other.get("letters") or "")[:1] != var:
+            continue
+        if other.get("category") not in ("trip", "alarm", "relief", "controller"):
+            continue
+        if inst.get("category") == "controller" and other.get("category") == "controller":
+            continue
+        if inst.get("category") == "alarm" and other.get("category") not in ("trip", "relief"):
+            continue
+        if inst.get("category") == "trip" and other.get("category") == "alarm":
+            continue
+        limit, word = _limit_word(other.get("letters"))
+        here = _equip_name(_nearest_large(ctx, other.get("box")), "")
+        where = f" on {here}" if here else ""
+        if other.get("category") == "trip":
+            text = f"{other['tag']} {limit} {word} trip{where}".strip()
+        elif other.get("category") == "alarm":
+            text = f"{other['tag']} {limit} {word} alarm{where}".strip()
+        elif other.get("category") == "relief":
+            set_at = f", set at {other['set_psig']} psig" if other.get("set_psig") else ""
+            text = f"{other['tag']} relief{where}{set_at}"
         else:
-            safeguards = relief_safeguards(ctx)
-            effect = f"{tag} no longer does its duty, so {ctx.fluid} is not handled as intended."
-        _place_row(
-            node, "No / Less Flow",
-            f"{tag} fails. Its duty is to {duty}.",
-            [effect],
-            safeguards, 4 if kind in ("heater", "pump", "compressor") else 3, 2,
-        )
+            text = f"{other['tag']} {word} controller{where}".strip()
+        out.append(sg(text, other.get("tag") or "-", strong=other.get("category") in ("trip", "relief")))
+        if len(out) == 3:
+            break
+    return out
 
+
+def _specific_instrument_row(node, ctx, inst):
+    cat = inst.get("category")
+    letters = str(inst.get("letters") or "")
+    tag = inst.get("tag") or "the instrument"
+    fluid = ctx.fluid
+    up = _equip_name(_nearest_large(ctx, inst.get("box"), -1), _soft(ctx.src_text()))
+    down = _equip_name(_nearest_large(ctx, inst.get("box"), 1), _soft(ctx.dest_text()))
+    here = _equip_name(_nearest_large(ctx, inst.get("box")), down)
+    limit, word = _limit_word(letters)
+    linked = _linked_valves(ctx, inst)
+    names = _join_tags([v.get("tag") for v in linked]) or tag
+    if cat == "controller" and letters[:1] == "P":
+        deviation, cause = "High Pressure", f"{tag} fails, so pressure control of the {fluid} through {names} is lost."
+        cons = [f"{fluid.capitalize()} pressure between {up} and {down} moves off the set point. {down} can see the upstream pressure, or the supply of {fluid} to {down} can stop."]
+    elif cat == "controller" and letters[:1] == "T":
+        deviation, cause = "High Temperature", f"{tag} fails, so temperature control of the {fluid} through {names} is lost."
+        cons = [f"The {fluid} leaves {here} hotter or colder than intended and arrives off specification at {down}."]
+    elif cat == "controller" and letters[:1] == "L":
+        deviation, cause = "High Level", f"{tag} fails, so level control in {here} is lost."
+        cons = [f"Level in {here} rises until liquid carries into the vapour outlet, or falls until gas blows through the liquid outlet toward {down}."]
+    elif cat == "controller" and letters[:1] == "F":
+        deviation, cause = "More Flow", f"{tag} fails, so flow control of the {fluid} through {names} is lost."
+        cons = [f"Flow of {fluid} from {up} to {down} is no longer held at the intended rate."]
+    elif cat == "trip":
+        deviation = {"P": "High Pressure", "T": "High Temperature", "L": "High Level", "F": "No / Less Flow"}.get(letters[:1], "Other")
+        if limit == "low":
+            deviation = {"P": "Low Pressure", "T": "Low Temperature", "L": "Low Level", "F": "No / Less Flow"}.get(letters[:1], deviation)
+        cause = f"{tag} fails to trip on {limit or word} {word} at {here}."
+        cons = [f"The {limit or 'abnormal'} {word} at {here} continues, and {fluid} can leave {here} outside its intended limits toward {down}."]
+    elif cat == "alarm":
+        deviation = {"P": "High Pressure", "T": "High Temperature", "L": "High Level", "F": "No / Less Flow"}.get(letters[:1], "Other")
+        cause = f"{tag} fails, so the operator is not warned of {limit or word} {word} at {here}."
+        cons = [f"{(limit or 'Abnormal').capitalize()} {word} at {here} continues with no operator action until a trip or a relief device acts."]
+    elif cat == "relief":
+        set_at = f" at {inst['set_psig']} psig" if inst.get("set_psig") else ""
+        deviation, cause = "High Pressure", f"{tag} fails to open{set_at} to protect {here}."
+        cons = [f"Pressure in {here} can rise above the design pressure read on the P&ID. Loss of containment of {ctx.release} can follow."]
+    elif cat == "switch":
+        deviation, cause = "Other", f"{tag} fails to switch on {limit or word} {word} at {here}."
+        cons = [f"The {limit or 'set'} {word} action at {here} does not happen, so {fluid} stays on the path toward {down}."]
+    else:
+        return
+    _place_row(node, deviation, cause, cons, _named_safeguards(ctx, inst), 4 if cat in ("trip", "relief") else 3, 2)
+
+
+def _component_rows(node, ctx):
+    """One specific cause for each controlling, trip, alarm or relief instrument on this node."""
     for inst in _reading_order(ctx.instruments):
-        _instrument_row(node, ctx, inst)
+        if inst.get("category") in ("indicator", "element", "relay", "other", "control_valve", None, ""):
+            continue
+        if inst.get("category") == "control_valve":
+            continue
+        mentioned = inst.get("tag") or ""
+        if mentioned and mentioned in str(node.get("deviations") or ""):
+            continue
+        _specific_instrument_row(node, ctx, inst)
 
 
 def _pinpoint_node(node, ctx, color=None):
     """Name each component by its duty, and write the node description from the start and the equipment."""
     _component_rows(node, ctx)
     node["boundary"] = _node_description(ctx, color)
-    duties = []
-    for eq in _reading_order(ctx.equipment):
-        if eq.get("offpage") or eq.get("kind") in ("panel", "package"):
-            continue
-        name = (eq.get("description") or eq.get("kind") or "equipment").strip()
-        duties.append(f"{eq['tag']} ({name}) is there to {_equipment_duty(eq, ctx)}")
-    if duties:
-        purpose = "The purpose of this node, read from its equipment, is " + "; ".join(duties[:8]) + "."
-        current = (node.get("design_intent") or "").strip()
-        if purpose not in current:
-            node["design_intent"] = f"{purpose} {current}".strip()
+    node["design_intent"] = _overall_intent(ctx)
     by_spec = {}
     for line in ctx.lines:
         if line.get("spec"):
@@ -673,24 +831,7 @@ def _pinpoint_node(node, ctx, color=None):
     if spec_rows:
         node.setdefault("deviations", []).append({"deviation": "Piping Specification", "rows": spec_rows})
 
-    notes = [_spec_text(code, tags) for code, tags in by_spec.items()]
-    for br in ctx.ext.get("spec_breaks") or []:
-        specs = " / ".join(br.get("specs") or [])
-        linked = [t for t in (br.get("lines") or []) if t in node_tags]
-        if not specs:
-            continue
-        if by_spec and not any(s in by_spec for s in (br.get("specs") or [])) and not linked:
-            continue
-        notes.append("Spec break " + specs + (f" between {', '.join(linked)}" if linked else ""))
-    if notes:
-        extra = "Piping classes in this node: " + "; ".join(notes)
-        current = node.get("design_conditions") or ""
-        if extra not in current:
-            node["design_conditions"] = f"{current}; {extra}" if current and current != "Not shown on the P&ID." else extra
-    design = _design_conditions(ctx)
-    if design and design not in (node.get("design_conditions") or ""):
-        current = node.get("design_conditions") or ""
-        node["design_conditions"] = f"{design}. {current}".strip(". ") if current and current != "Not shown on the P&ID." else design
+    node["design_conditions"] = _design_conditions(ctx) or "Not shown on the P&ID."
 
 
 def equipment_node(ctx, eq, nid):
@@ -932,20 +1073,27 @@ def control_valve_node(ctx, cvs, nid, heater):
     up_p = (heater["design"].get("p_op") if heater else None)
     up_pmax = (heater["design"].get("p_des") if heater else None)
     bypass = ctx.valves_of("globe")
+    up_name = _equip_name(_nearest_large(ctx, cv.get("box"), -1), ctx.src_text())
+    down_name = _equip_name(_nearest_large(ctx, cv.get("box"), 1), dest_eq)
+    down_des = (_nearest_large(ctx, cv.get("box"), 1) or {}).get("design") or {}
     devs = []
 
     devs.append(dev("No / Less Flow", [
-        row(f"{tag} {fail_txt if fail == 'FC' else 'closes'} - loss of instrument air / signal, positioner failure, or controller malfunction.",
-            [f"Loss of {ctx.fluid} supply to {dest}; possible trip of downstream users (production loss).",
-             f"Blocked-in upstream equipment" + (f" ({heater['tag']} energized - refer {heater['tag']} node)." if heater else ".")],
+        row(f"{tag} {fail_txt if fail == 'FC' else 'fails closed'} on the {ctx.fluid} line from {up_name} to {down_name}.",
+            [f"Flow of {ctx.fluid} from {up_name} to {down_name} stops. {down_name} loses supply and {dest} is starved.",
+             f"{up_name} can be blocked in" + (f" while {heater['tag']} stays energised." if heater else ".")],
             "A", controller_safeguard(ctx, var.upper()[0], "L") + ([sg("Manual bypass globe valve", ctx.names(bypass[:1]))] if bypass else [])
             + (trip_safeguards(ctx, "T", "H") if heater else []), 3, 3),
-        row(_isolation_cause(ctx, cv.get("box"), tag), ["As above."], "A",
+        row(_isolation_cause(ctx, cv.get("box"), tag),
+            [f"The same loss of {ctx.fluid} from {up_name} to {down_name}."], "A",
             controller_safeguard(ctx, var.upper()[0], "L"), 3, 2),
     ]))
 
-    hp_cons = [f"Downstream pressure rises towards upstream pressure" + (f" ({up_p} psig normal, up to {up_pmax} psig)" if up_p else "")
-               + f"; overpressure of {dest_eq} (design pressure not shown on this P&ID) - rupture, release of {ctx.release}, fire / explosion."]
+    limit = f" above its design pressure of {down_des['p_des']} psig" if down_des.get("p_des") else " above its design pressure"
+    hp_cons = [f"Letdown between {up_name} and {down_name} is lost. "
+               f"Pressure at {down_name} rises toward the upstream pressure"
+               + (f" ({up_p} psig operating, {up_pmax} psig design)" if up_p else "")
+               + f" and can take {down_name}{limit}. Release of {ctx.release} can follow."]
     down = [l for l in ctx.process_lines if any(l["tag"] == c["line"] for c in ctx.dests)]
     if down and up_pmax and down[0].get("rating_psig"):
         if down[0]["rating_psig"] >= up_pmax:
@@ -954,7 +1102,7 @@ def control_valve_node(ctx, cvs, nid, heater):
             hp_cons.append(f"Outlet piping {down[0]['tag']} ({down[0]['rating']}, {down[0]['rating_psig']} psig) can be overpressured.")
     if heater:
         hp_cons.append(f"High flow exceeds {heater['tag']} capacity - low temperature (refer Low Temperature).")
-    more_rows = [row(f"{tag} fails open - transmitter reads low, controller or positioner failure.", hp_cons, "S",
+    more_rows = [row(f"{tag} fails open on the {ctx.fluid} line from {up_name} to {down_name}.", hp_cons, "S",
                      controller_safeguard(ctx, var.upper()[0], "H") + trip_safeguards(ctx, "P", "H"), 5, 3,
                      [ctx.recs.add(f"Verify that the relief device(s) on {dest_eq} are sized for gas blow-by through fully open {tag}"
                                    + (f" plus its bypass {ctx.names(bypass[:1])}" if bypass else "")
@@ -1472,9 +1620,9 @@ def _build(ctx, ext, entry, nid):
     node = _merge(parts)
     if (entry.get("title") or "").strip():
         node["title"] = entry["title"].strip()
+    _pinpoint_node(node, ctx, entry.get("color"))
     if (entry.get("design_intent") or "").strip():
         node["design_intent"] = entry["design_intent"].strip()
-    _pinpoint_node(node, ctx, entry.get("color"))
     return node
 
 
@@ -1643,12 +1791,9 @@ def _worksheet(ext, study, plan, source):
         ranking,
         "CC (Consequence Category): S = Safety / People, E = Environment, A = Asset / Production.",
         "Drain lines, vent lines and lines to safety valves are left out of the node description. They are not part of steady-state continuous operation.",
-        "The P&ID is read in full, every text from top to bottom and from left to right. "
-        "Node 1 is then read from its start to its end, and the same reading is repeated for every following node. "
-        "Instrument function is taken from the instrument legend, line number and insulation from the line designation, "
-        "components from the piping component legend and the component identifier, and equipment ratings from the piping specification. "
-        "A cause is what happens if an instrument on that line faults. The consequence follows from that cause. "
-        "The safeguard is what prevents the consequence. Design conditions are the specification of the main equipment.",
+        "The node description is a summary of the process route. Design intent is the overall purpose of the node. "
+        "Design conditions are the design and operating pressure and temperature of the main equipment, read from the P&ID. "
+        "Each cause names the instrument that fails, the consequence names the equipment that sees it, and the safeguard names the device that stops it.",
     ]
     classes = list(kb.specs())
     if classes:

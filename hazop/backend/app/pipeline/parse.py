@@ -492,6 +492,77 @@ DUTY_RE = re.compile(r"DUTY:?(\d+(?:\.\d+)?)MMBTU")
 POWER_RE = re.compile(r"P?O?WER:?(\d+(?:\.\d+)?)KW")
 
 
+def _token_text(token):
+    return token.text if hasattr(token, "text") else str(token.get("text") or "")
+
+
+def _token_box(token):
+    return token.box() if hasattr(token, "box") else token.get("box")
+
+
+def _harvest_design(equipment, tokens):
+    """Read design and operating pressure and temperature drawn beside the main equipment."""
+    heights = []
+    packed = []
+    for token in tokens:
+        box = _token_box(token)
+        if not box:
+            continue
+        packed.append((token, box))
+        if box[3] > box[1]:
+            heights.append(box[3] - box[1])
+    if not packed or not heights:
+        return
+    step = sorted(heights)[len(heights) // 2]
+    reach_x, reach_y = 24 * step, 16 * step
+    large = {"vessel", "exchanger", "heater", "pump", "compressor", "tank"}
+    centres = []
+    for eq in equipment:
+        if eq.get("offpage") or eq.get("kind") not in large or not eq.get("box"):
+            continue
+        box = eq["box"]
+        centres.append((((box[0] + box[2]) / 2, (box[1] + box[3]) / 2), eq))
+    patterns = (
+        (re.compile(r"DESIGN\s+PRESS(?:URE)?\s*[:\-]?\s*(-?\d+(?:\.\d+)?)", re.I), "p_des"),
+        (re.compile(r"OPER(?:ATING)?\s+PRESS(?:URE)?\s*[:\-]?\s*(-?\d+(?:\.\d+)?)", re.I), "p_op"),
+        (re.compile(r"DESIGN\s+TEMP(?:ERATURE)?\s*[:\-]?\s*(-?\d+(?:\.\d+)?)", re.I), "t_des"),
+        (re.compile(r"OPER(?:ATING)?\s+TEMP(?:ERATURE)?\s*[:\-]?\s*(-?\d+(?:\.\d+)?)", re.I), "t_op"),
+        (re.compile(r"(?:DP|DES(?:IGN)?\s*P)\s*[:\-]?\s*(-?\d+(?:\.\d+)?)", re.I), "p_des"),
+        (re.compile(r"(?:OP|OPER(?:ATING)?\s*P)\s*[:\-]?\s*(-?\d+(?:\.\d+)?)", re.I), "p_op"),
+        (re.compile(r"(?:DT|DES(?:IGN)?\s*T)\s*[:\-]?\s*(-?\d+(?:\.\d+)?)", re.I), "t_des"),
+        (re.compile(r"(?:OT|OPER(?:ATING)?\s*T)\s*[:\-]?\s*(-?\d+(?:\.\d+)?)", re.I), "t_op"),
+    )
+    pair_p = re.compile(r"(?:PRESS(?:URE)?|P)\s*[:\-]?\s*(-?\d+(?:\.\d+)?)\s*/\s*(-?\d+(?:\.\d+)?)", re.I)
+    pair_t = re.compile(r"(?:TEMP(?:ERATURE)?|T)\s*[:\-]?\s*(-?\d+(?:\.\d+)?)\s*/\s*(-?\d+(?:\.\d+)?)", re.I)
+    for (cx, cy), eq in centres:
+        near = []
+        for token, box in packed:
+            tx, ty = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+            if abs(tx - cx) > reach_x or abs(ty - cy) > reach_y:
+                continue
+            owner = min(centres, key=lambda item: (item[0][0] - tx) ** 2 + (item[0][1] - ty) ** 2)
+            if owner[1] is not eq:
+                continue
+            near.append((ty, tx, _token_text(token)))
+        if not near:
+            continue
+        near.sort()
+        text = " ".join(word for _, _, word in near)
+        design = eq.setdefault("design", {})
+        for rx, key in patterns:
+            found = rx.search(text)
+            if found:
+                design.setdefault(key, _num(found.group(1)))
+        found = pair_p.search(text)
+        if found:
+            design.setdefault("p_des", _num(found.group(1)))
+            design.setdefault("p_op", _num(found.group(2)))
+        found = pair_t.search(text)
+        if found:
+            design.setdefault("t_des", _num(found.group(1)))
+            design.setdefault("t_op", _num(found.group(2)))
+
+
 def _num(v):
     if v is None:
         return None
@@ -795,6 +866,7 @@ def parse(raw_tokens, image_size):
     instruments = _parse_instruments(tokens)
     valves = _parse_valves(tokens)
     equipment = _parse_equipment(tokens, connector_groups)
+    _harvest_design(equipment, tokens)
     connectors = _parse_connectors(connector_groups, pipe_lines, tokens)
     _attach_instrument_details(instruments, tokens)
     instruments = _infer_control_valves(instruments, tokens)
