@@ -246,8 +246,8 @@ def _is_isa_letters(s):
 
 def _instrument_category(letters):
     rest = letters[1:]
-    if letters in ("PSV", "PSE", "TSE", "FSV") or letters.endswith("SV"):
-        return "relief" if letters in ("PSV", "PSE") else "safety"
+    if letters in ("PSV", "PSE", "PZV", "PRV") or (letters[:1] == "P" and letters.endswith("SV")):
+        return "relief"
     if rest.startswith("S") and any(m in rest for m in ("HH", "LL")):
         return "trip"
     if rest.startswith("S") and rest[1:2] in ("H", "L"):

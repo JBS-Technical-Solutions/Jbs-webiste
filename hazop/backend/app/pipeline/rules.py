@@ -388,24 +388,39 @@ def sg(text, tag, strong=False):
 
 
 def trip_safeguards(ctx, var, direction):
-    """Trips (SIS) for a variable and direction ('H' or 'L'), merged with matching alarms."""
-    hh = direction * 2
+    """Trips, alarms and the shutdown valve that stop this variable going too high or too low."""
+    word = {"T": "temperature", "P": "pressure", "L": "level", "F": "flow"}.get(var, "process")
+    trips, alarms = [], []
+    for inst in ctx.instruments:
+        letters = str(inst.get("letters") or "")
+        if not letters or letters[0] != var or inst.get("category") == "relief":
+            continue
+        rest = letters[1:]
+        cat = inst.get("category")
+        high = "H" in rest
+        low = "L" in rest
+        if cat == "alarm" and ((direction == "H" and high) or (direction == "L" and low)):
+            alarms.append(inst)
+        elif cat in ("trip", "switch") or "HH" in rest or "LL" in rest or rest[:1] == "S":
+            if (direction == "H" and high) or (direction == "L" and low):
+                trips.append(inst)
     out = []
-    for t in ctx.find(var=var, cats=("trip",), has=(hh,)):
-        alarms = [a for a in ctx.find(var=var, cats=("alarm",), has=(hh,))
-                  if a["number"].startswith(t["number"]) or t["number"].startswith(a["number"])]
-        word = {"T": "temperature", "P": "pressure", "L": "level", "F": "flow"}.get(var, ctx_var(t))
-        lvl = "high-high" if direction == "H" else "low-low"
-        text = f"{lvl.capitalize()} {word} trip (SIS)"
-        if t.get("voting"):
-            text += f", {t['voting']} voting"
-        if alarms:
-            text += f", with {lvl} alarm"
-        out.append(sg(text, ctx.tags([t] + alarms), strong=True))
-    if not out:
-        for a in ctx.find(var=var, cats=("alarm", "switch"), has=(direction,)):
-            word = ctx_var(a)
-            out.append(sg(f"{'High' if direction == 'H' else 'Low'} {word} alarm", a["tag"]))
+    for inst in trips:
+        rest = str(inst.get("letters") or "")[1:]
+        if direction == "H":
+            limit = "high-high" if "HH" in rest else "high"
+        else:
+            limit = "low-low" if "LL" in rest else "low"
+        closers = _shutdown_for(ctx, inst)
+        action = f", closing {_join_tags([c['tag'] for c in closers])}" if closers else ""
+        out.append(sg(f"{inst['tag']} {limit} {word} trip{action}", inst["tag"], strong=True))
+    for inst in alarms:
+        rest = str(inst.get("letters") or "")[1:]
+        if direction == "H":
+            limit = "high-high" if "HH" in rest else "high"
+        else:
+            limit = "low-low" if "LL" in rest else "low"
+        out.append(sg(f"{inst['tag']} {limit} {word} alarm", inst["tag"]))
     return out
 
 
@@ -416,22 +431,66 @@ def ctx_var(i):
 def controller_safeguard(ctx, var, direction=None):
     out = []
     for c in ctx.find(var=var, cats=("controller",)):
-        text = f"{ctx_var(c).capitalize()} control"
+        text = f"{c['tag']} {ctx_var(c)} control"
         if c.get("set_point"):
             text += f" (set {c['set_point']})"
-        if direction:
-            text += f" with {'high' if direction == 'H' else 'low'} alarm"
-        out.append(sg(text, c["tag"] + (f" ({direction})" if direction else "")))
+        out.append(sg(text, c["tag"]))
+    return out
+
+
+_RELIEF_LETTERS = {"PSV", "PSE", "PZV", "PRV"}
+_SHUTDOWN_LETTERS = {"SDV", "ESDV", "XV", "BDV", "USV", "SSV", "UZV"}
+
+
+def _is_relief(inst):
+    letters = str(inst.get("letters") or "")
+    return inst.get("category") == "relief" or letters in _RELIEF_LETTERS
+
+
+def _shutdown_valves(ctx):
+    found, seen = [], set()
+    for inst in ctx.instruments:
+        letters = str(inst.get("letters") or "")
+        tag = str(inst.get("tag") or "")
+        head = tag.split("-")[0]
+        if letters in _SHUTDOWN_LETTERS or head in _SHUTDOWN_LETTERS:
+            if tag and tag not in seen:
+                seen.add(tag)
+                found.append(inst)
+    for valve in ctx.valves:
+        code = str(valve.get("code") or "")
+        if code.split("-")[0] in _SHUTDOWN_LETTERS and code not in seen:
+            seen.add(code)
+            found.append({"tag": code, "box": valve.get("box"), "loop": "", "letters": code.split("-")[0]})
+    return found
+
+
+def _shutdown_for(ctx, inst):
+    """The shutdown valve this trip closes, from the same loop or drawn beside it."""
+    loop = str(inst.get("loop") or "")
+    box = inst.get("box")
+    out = []
+    for valve in _shutdown_valves(ctx):
+        same_loop = loop and (str(valve.get("loop") or "") == loop or str(valve.get("number") or "").startswith(loop) or loop in str(valve.get("tag") or ""))
+        near = box and valve.get("box") and (abs(_cx(valve) - _cx({"box": box})) <= 0.12)
+        if same_loop or near:
+            out.append(valve)
     return out
 
 
 def relief_safeguards(ctx):
     out = []
-    for p in ctx.find(cats=("relief",)):
-        text = "Pressure safety valve"
+    for p in ctx.instruments:
+        if not _is_relief(p):
+            continue
+        text = f"{p['tag']} pressure safety valve"
         if p.get("set_psig"):
             text += f" set at {p['set_psig']} psig"
-        text += " to flare" if ctx.flare_lines else ""
+        here = _equip_name(_nearest_large(ctx, p.get("box")), "")
+        if here:
+            text += f" on {here}"
+        if ctx.flare_lines:
+            text += " to flare"
         if p.get("fire_case"):
             text += " (sized for fire case)"
         out.append(sg(text, p["tag"], strong=True))
@@ -690,38 +749,24 @@ def _limit_word(letters):
 
 
 def _named_safeguards(ctx, inst):
-    """The devices on this node that still act if this instrument fails."""
+    """Devices on this P&ID that still stop the consequence if this instrument fails."""
     letters = str(inst.get("letters") or "")
     var = letters[:1]
+    rest = letters[1:]
+    direction = "L" if "L" in rest and "H" not in rest else "H"
+    found = []
+    if var == "P":
+        found.extend(relief_safeguards(ctx))
+    if var in ("P", "T", "L", "F"):
+        found.extend(trip_safeguards(ctx, var, direction))
+    own = str(inst.get("tag") or "")
     out = []
-    for other in _reading_order(ctx.instruments):
-        if other is inst or other.get("tag") == inst.get("tag"):
+    for item in found:
+        if own and (item.get("tag") == own or own in str(item.get("text") or "")):
             continue
-        if str(other.get("letters") or "")[:1] != var:
+        if any(item.get("tag") == have.get("tag") for have in out):
             continue
-        if other.get("category") not in ("trip", "alarm", "relief", "controller"):
-            continue
-        if inst.get("category") == "controller" and other.get("category") == "controller":
-            continue
-        if inst.get("category") == "alarm" and other.get("category") not in ("trip", "relief"):
-            continue
-        if inst.get("category") == "trip" and other.get("category") == "alarm":
-            continue
-        limit, word = _limit_word(other.get("letters"))
-        here = _equip_name(_nearest_large(ctx, other.get("box")), "")
-        where = f" on {here}" if here else ""
-        if other.get("category") == "trip":
-            text = f"{other['tag']} {limit} {word} trip{where}".strip()
-        elif other.get("category") == "alarm":
-            text = f"{other['tag']} {limit} {word} alarm{where}".strip()
-        elif other.get("category") == "relief":
-            set_at = f", set at {other['set_psig']} psig" if other.get("set_psig") else ""
-            text = f"{other['tag']} relief{where}{set_at}"
-        else:
-            text = f"{other['tag']} {word} controller{where}".strip()
-        out.append(sg(text, other.get("tag") or "-", strong=other.get("category") in ("trip", "relief")))
-        if len(out) == 3:
-            break
+        out.append(item)
     return out
 
 
@@ -1673,6 +1718,55 @@ def _gather_along(ext, tags):
     return chosen
 
 
+def _is_safeguard_instrument(inst):
+    letters = str(inst.get("letters") or "")
+    head = str(inst.get("tag") or "").split("-")[0]
+    if inst.get("category") in ("relief", "trip", "alarm", "switch", "safety"):
+        return True
+    return letters in _RELIEF_LETTERS or letters in _SHUTDOWN_LETTERS or head in _SHUTDOWN_LETTERS
+
+
+def _is_safeguard_valve(valve):
+    kind = str(valve.get("type") or "").lower()
+    code = str(valve.get("code") or "")
+    return kind.startswith("check") or code.split("-")[0] in _SHUTDOWN_LETTERS
+
+
+def _keep_safeguards(ext, scoped):
+    """A PSV, trip, alarm or shutdown valve protects the node even when it sits off the coloured line."""
+    equipment = [e for e in scoped.get("equipment") or [] if e.get("box")]
+    loops = {str(i.get("loop") or "") for i in scoped.get("instruments") or [] if i.get("loop")}
+    numbers = set()
+    for eq in scoped.get("equipment") or []:
+        numbers.update(re.findall(r"\d{3,5}", str(eq.get("tag") or "")))
+    have_i = {str(i.get("tag") or "").upper() for i in scoped.get("instruments") or []}
+    have_v = {str(v.get("code") or "").upper() for v in scoped.get("valves") or []}
+
+    def near(box):
+        if not box or not equipment:
+            return False
+        cx, cy = _center(box)
+        return any((cx - sx) ** 2 + (cy - sy) ** 2 <= 0.25 ** 2 for sx, sy in (_center(e["box"]) for e in equipment))
+
+    def same_equipment(tag):
+        return bool(numbers & set(re.findall(r"\d{3,5}", str(tag or ""))))
+
+    for inst in ext.get("instruments") or []:
+        tag = str(inst.get("tag") or "").upper()
+        if not tag or tag in have_i or not _is_safeguard_instrument(inst):
+            continue
+        if near(inst.get("box")) or str(inst.get("loop") or "") in loops or same_equipment(tag):
+            scoped.setdefault("instruments", []).append(inst)
+            have_i.add(tag)
+    for valve in ext.get("valves") or []:
+        code = str(valve.get("code") or "").upper()
+        if not code or code in have_v or not _is_safeguard_valve(valve):
+            continue
+        if near(valve.get("box")):
+            scoped.setdefault("valves", []).append(valve)
+            have_v.add(code)
+
+
 def _scope_extraction(ext, tags, strict=False):
     """Keep the tags of one part, plus whatever sits next to them on the drawing.
 
@@ -1727,6 +1821,7 @@ def _scope_extraction(ext, tags, strict=False):
         "car_sealed": any("CSO" in (v.get("attributes") or []) for v in scoped["valves"]),
         "interlocks": sum(1 for t in scoped["tokens"] if str(t.get("text") or "").strip() == "I"),
     }
+    _keep_safeguards(ext, scoped)
     return scoped
 
 
