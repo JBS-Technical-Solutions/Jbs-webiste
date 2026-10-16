@@ -18,27 +18,23 @@ from ..risk import evaluate
 
 TIMEOUT = httpx.Timeout(240.0, connect=20.0)
 
-SYSTEM = """You are a senior process safety engineer facilitating a HAZOP study (IEC 61882) for an oil & gas facility.
-You are given a P&ID image, entities extracted from it by OCR, project standards and a draft worksheet produced by a
-rule engine. Produce an improved, complete HAZOP worksheet for this P&ID.
+SYSTEM = """You are a senior process safety engineer reviewing a HAZOP worksheet (IEC 61882) for an oil & gas facility.
+The draft was already written by reading the PFD, then reading each P&ID node from its start to its end. Review that draft against the P&ID. Do not start a new worksheet.
 
-Rules:
-- Use only tags, lines and equipment that appear on the drawing or in the extracted entities. Never invent tag numbers.
-- Keep the node structure sensible (major equipment, control valve / letdown, relief and flare). Add or merge nodes if
-  the drawing clearly warrants it.
-- The "boundary" field is the node description. Start it at the inlet or the first equipment, then name every equipment item in the node and what that item is there to do.
-- Write each cause, consequence and safeguard from the duty of that valve or equipment. A ball valve isolates, a check valve stops reverse flow, a globe valve throttles, a pump moves fluid, a vessel separates, a heater adds heat, a relief valve protects against overpressure.
-- For each node use relevant guide-word deviations (No/Less Flow, More Flow, Reverse Flow, High/Low Pressure,
-  High/Low Temperature, High/Low Level, Composition/Contamination, Utility Failure, Maintenance/Start-up).
-- Each row: one credible cause, numbered consequences (escalation to the worst credible outcome without safeguards),
-  CC (S = Safety, E = Environment, A = Asset), safeguards actually shown on the P&ID with their tags, and C and L.
-  C and L must be levels of the uploaded risk matrix in the input. The risk ranking is that file's cell at (C, L).
-  Do not invent a ranking from a generic C times L score.
-- Additional project documents (e.g. PFD) may be attached; use them for context, but tags must still come from the P&ID.
-- Recommendations must be specific and actionable; reuse the same recommendation id when the same action applies.
-- Respect piping spec ratings, design pressures/temperatures and sour service when judging consequences.
-- A company-standards block is included in the user message. Treat it as the project legend: tag structure, line graphics,
-  instrument bubbles, piping symbols, piping classes and the risk-matrix definitions. Prefer it over a generic ISA reading.
+Keep these exactly:
+- The same nodes, in the same order. Do not add, merge or remove a node.
+- boundary is the node description: a short summary of the route (where the line comes from, what main equipment it passes, and where it goes). Do not list every instrument or valve.
+- design_intent is one sentence: the overall purpose of that node.
+- design_conditions are the design and operating pressure and temperature of the main equipment only. Use a number only when it is on the P&ID. Do not add piping classes or small valves.
+
+You may improve causes, consequences and safeguards:
+- One cause is one credible failure of a device that is on the drawing.
+- The consequence is what that cause does to the equipment named on that line.
+- A safeguard is a device drawn on the P&ID that prevents that consequence: a trip, an alarm, a relief valve, a shutdown valve or a check valve. Name its tag.
+- Do not list a device that does not stop that consequence.
+- Never invent a tag, line number or equipment number. If it is not in extracted_entities or the draft, do not write it.
+- C and L are levels of the uploaded risk matrix. The ranking is that file's cell. Do not multiply C by L.
+- Recommendations must name a real device or a real missing device. Reuse a recommendation id when the action is the same.
 - Output ONLY JSON, no markdown, matching exactly this schema:
 {"nodes":[{"id":1,"title":"...","boundary":"...","design_intent":"...","design_conditions":"...",
   "deviations":[{"deviation":"No / Less Flow","rows":[{"cause":"...","consequences":["..."],"cc":"S",
@@ -67,8 +63,33 @@ def _entities_summary(ext):
     }
 
 
-FIXED_NODES = ("The nodes in the draft worksheet were defined by the user. Keep exactly these nodes, in this order, "
-               "with their titles and boundaries; do not add, merge or remove nodes.")
+FIXED_NODES = ("Keep every draft node, in this order, including its boundary, design_intent and design_conditions. "
+               "Change only causes, consequences and safeguards.")
+
+
+_TAG = re.compile(r"\b(?:[A-Z]{1,6}-\d{2,5}[A-Z0-9/-]*|\d{1,2}-[A-Z]{1,4}-[A-Z0-9]+(?:-[A-Z0-9]+)+)\b")
+
+
+def _allowed_tags(ext, draft):
+    allowed = set()
+    for key, field in (("equipment", "tag"), ("instruments", "tag"), ("lines", "tag"), ("valves", "code"), ("connectors", "tag")):
+        for ent in (ext or {}).get(key) or []:
+            value = str(ent.get(field) or "").strip().upper()
+            if value:
+                allowed.add(value)
+    for match in _TAG.finditer(json.dumps(draft, default=str).upper()):
+        allowed.add(match.group(0))
+    return allowed
+
+
+def _invented(text, allowed):
+    bad = []
+    for match in _TAG.finditer(str(text or "").upper()):
+        token = match.group(0)
+        if token in allowed or any(token in known or known in token for known in allowed):
+            continue
+        bad.append(token)
+    return bad
 
 
 def _prompt(ext, draft, texts, fixed_nodes):
@@ -84,6 +105,7 @@ def _prompt(ext, draft, texts, fixed_nodes):
             "cells": {f"C{c}": {f"L{l}": m["cells"][c - 1][l - 1] for l in range(1, nl + 1)} for c in range(1, nc + 1)},
         },
         "draft_worksheet": {k: draft[k] for k in ("nodes", "recommendations", "assumptions")},
+        "allowed_tags": sorted(_allowed_tags(ext, draft))[:300],
     }
     if texts:
         payload["project_documents"] = texts
@@ -196,43 +218,67 @@ def _as_list(v):
     return [str(x) for x in v if str(x).strip()]
 
 
-def normalise(data, draft):
-    """Coerce an AI answer into the worksheet schema; recompute risk; renumber deviations."""
+def normalise(data, draft, ext=None):
+    """Keep the draft node summary. Accept only causes and safeguards whose tags are on the drawing."""
     recs = {str(k): str(v) for k, v in (data.get("recommendations") or {}).items()}
+    allowed = _allowed_tags(ext, draft)
     nc, nl = risk.size()
+    ai_nodes = list(data.get("nodes") or [])
     nodes = []
-    for n_idx, node in enumerate(data.get("nodes") or [], 1):
+    for n_idx, draft_node in enumerate(draft.get("nodes") or [], 1):
+        ai_node = ai_nodes[n_idx - 1] if n_idx <= len(ai_nodes) and isinstance(ai_nodes[n_idx - 1], dict) else {}
         devs = []
-        for d in node.get("deviations") or []:
+        for d in ai_node.get("deviations") or []:
             rows = []
             for r in d.get("rows") or []:
-                if not r.get("cause"):
+                cause = str(r.get("cause") or "").strip()
+                if not cause or _invented(cause, allowed):
                     continue
+                safeguards = [s for s in _as_list(r.get("safeguards")) if not _invented(s, allowed)]
+                tags = [t for t in _as_list(r.get("tags")) if not _invented(t, allowed)]
+                if not safeguards or safeguards == ["None identified on this P&ID"]:
+                    borrowed = _draft_safeguards(draft_node, cause)
+                    if borrowed:
+                        safeguards, tags = borrowed
                 c, l = _clamp(r.get("c"), 3, nc), _clamp(r.get("l"), 2, nl)
                 rows.append({
-                    "cause": str(r["cause"]),
-                    "consequences": _as_list(r.get("consequences")),
+                    "cause": cause,
+                    "consequences": [c_ for c_ in _as_list(r.get("consequences")) if not _invented(c_, allowed)],
                     "cc": str(r.get("cc") or "S")[:3],
-                    "safeguards": _as_list(r.get("safeguards")) or ["None identified on this P&ID"],
-                    "tags": _as_list(r.get("tags")) or ["-"],
+                    "safeguards": safeguards or ["None identified on this P&ID"],
+                    "tags": tags or ["-"],
                     "c": c, "l": l, "risk": evaluate(c, l),
-                    "recommendations": [x for x in _as_list(r.get("recommendations")) if x in recs],
+                    "recommendations": [x for x in _as_list(r.get("recommendations")) if x in recs and not _invented(recs[x], allowed)],
                 })
             if rows:
                 name = re.sub(r"^\s*\d+(\.\d+)*\s*", "", str(d.get("deviation") or "Deviation"))
                 devs.append({"deviation": f"{n_idx}.{len(devs) + 1} {name}", "rows": rows})
-        if devs:
-            nodes.append({
-                "id": n_idx, "title": str(node.get("title") or f"Node {n_idx}"),
-                "boundary": str(node.get("boundary") or ""), "design_intent": str(node.get("design_intent") or ""),
-                "design_conditions": str(node.get("design_conditions") or ""), "deviations": devs,
-            })
+        node = dict(draft_node)
+        node.update({
+            "id": n_idx,
+            "title": str(draft_node.get("title") or f"Node {n_idx}"),
+            "boundary": str(draft_node.get("boundary") or ""),
+            "design_intent": str(draft_node.get("design_intent") or ""),
+            "design_conditions": str(draft_node.get("design_conditions") or ""),
+            "deviations": devs or draft_node.get("deviations") or [],
+        })
+        nodes.append(node)
     if not nodes:
         raise AIError("The AI response contained no usable worksheet rows.")
-    for i, n in enumerate(nodes, 1):
-        n["id"] = i
     assumptions = _as_list(data.get("assumptions")) or draft.get("assumptions", [])
     return {"study": draft["study"], "nodes": nodes, "recommendations": recs, "assumptions": assumptions}
+
+
+def _draft_safeguards(node, cause):
+    wanted = _TAG.findall(str(cause).upper())
+    for dev in node.get("deviations") or []:
+        for row in dev.get("rows") or []:
+            text = str(row.get("cause") or "").upper()
+            if wanted and any(tag in text for tag in wanted):
+                safeguards = [s for s in row.get("safeguards") or [] if s and s != "None identified on this P&ID"]
+                if safeguards:
+                    return safeguards, row.get("tags") or ["-"]
+    return None
 
 
 def review(provider, png_bytes, ext, draft, attachments=(), fixed_nodes=False):
@@ -245,6 +291,6 @@ def review(provider, png_bytes, ext, draft, attachments=(), fixed_nodes=False):
                for a in attachments if a.get("png")][:3]
     texts = [{"name": a["name"], "text": a["text"]} for a in attachments if a.get("text")]
     text = CALLERS[provider](cfg, images, _prompt(ext, draft, texts, fixed_nodes))
-    result = normalise(_parse_json(text), draft)
+    result = normalise(_parse_json(text), draft, ext)
     result["study"] = dict(result["study"], analysis=f"AI-assisted ({cfg['label']} {cfg['model']})")
     return result

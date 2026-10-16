@@ -20,7 +20,7 @@ from . import documents
 from . import knowledge as kb
 from . import risk
 from .config import CACHE_DIR, JOB_TTL_HOURS, JOBS_DIR, MAX_PID_PAGES, RENDER_DPI
-from .pipeline import ocr, parse, render, rules
+from .pipeline import ai, ocr, parse, render, rules
 
 STAGES = [
     {"id": "upload", "label": "Upload received"},
@@ -699,6 +699,36 @@ def _references(job):
     return f"{BASE_REFERENCES}, " + ", ".join(parts)
 
 
+def _review_with_model(job_id, result, ext, page, warnings):
+    """The reading steps are already done. The model may only tighten causes, consequences and safeguards."""
+    job = _jobs[job_id]
+    opts = job.get("options") or {}
+    if opts.get("mode") != "ai":
+        return result
+    provider = opts.get("provider") or "gemini"
+    png = image_path(job_id, page)
+    if png is None or not png.exists():
+        warnings.append("The model review was skipped because the drawing preview was not available.")
+        return result
+    _update(job_id, detail="Reviewing the worksheet on the P&ID. The node summary, purpose and design conditions stay as written.")
+    attachments = []
+    pfd = job.get("_pfd_study")
+    if pfd:
+        attachments.append({"name": "PFD", "text": json.dumps(pfd, default=str)[:6000]})
+    try:
+        reviewed = ai.review(provider, png.read_bytes(), ext, result, attachments, fixed_nodes=True)
+    except ai.AIError as e:
+        warnings.append(f"The model review was skipped: {e}")
+        return result
+    note = ("The worksheet was written from the PFD and the P&ID first. "
+            "The model then checked causes, consequences and safeguards against the drawing. "
+            "The node summary, the overall purpose and the main-equipment conditions were kept, and no new tag was added.")
+    notes = reviewed.setdefault("assumptions", [])
+    if note not in notes:
+        notes.append(note)
+    return reviewed
+
+
 def _analyse(job_id):
     job = _jobs[job_id]
     opts = job["options"]
@@ -763,6 +793,7 @@ def _analyse(job_id):
                     _on_part(index, len(writable), entry, item.get("label") or "")
                     page_ext = item["ext"]
                     page_ws = rules.generate(page_ext, study, prepared=([entry], source))
+                    page_ws = _review_with_model(job_id, page_ws, page_ext, item["page"], warnings)
                     page_ext.pop("node_colors", None)
                     _stamp_source(page_ws, page_ext, item["file"], item["page"], True)
                     if page_ws.get("nodes"):
@@ -781,6 +812,7 @@ def _analyse(job_id):
                 result = _combine_sheets(sheets, job["filename"], job["_image"]["page_count"])
             else:
                 result = rules.generate(ext, study, job.get("_nodes"), on_part=_on_part, on_plan=_on_plan)
+                result = _review_with_model(job_id, result, ext, 0, warnings)
                 ext.pop("node_colors", None)
                 _stamp_source(result, ext, job["filename"], 0, True)
             result["study"].update({k: v for k, v in study.items() if v})

@@ -21,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { checkDocument, type JobOptions, type ProjectDocuments } from "@/lib/api";
 import type { DocumentKind, Health, NodeMode, StudyInfo } from "@/lib/types";
 import { Button, Card } from "./ui";
@@ -165,6 +165,10 @@ export default function UploadPanel({
   const maxOptional = health?.max_optional_docs ?? 5;
   const aiAvailable = providers.length > 0;
   const activeProvider = provider || providers[0]?.id || "";
+  const modeChosen = useRef(false);
+  useEffect(() => {
+    if (aiAvailable && !modeChosen.current) setMode("ai");
+  }, [aiAvailable]);
 
   const tooBig = (f: File) => (f.size > maxMb * 1024 * 1024 ? `"${f.name}" is ${formatSize(f.size)}. The limit is ${maxMb} MB.` : null);
 
@@ -493,7 +497,7 @@ export default function UploadPanel({
               id: "ai" as const,
               icon: Sparkles,
               title: "AI-assisted",
-              desc: aiAvailable ? "Rule engine + vision LLM review" : "Add an API key in backend/.env",
+              desc: aiAvailable ? "Reading steps first, then Gemini checks causes and safeguards" : "Add an API key in backend/.env",
               disabled: !aiAvailable,
             },
           ].map((m) => (
@@ -501,7 +505,10 @@ export default function UploadPanel({
               key={m.id}
               type="button"
               disabled={m.disabled}
-              onClick={() => setMode(m.id)}
+              onClick={() => {
+                modeChosen.current = true;
+                setMode(m.id);
+              }}
               className={clsx(
                 "relative flex items-start gap-2.5 rounded-xl border p-3 text-left transition",
                 mode === m.id
