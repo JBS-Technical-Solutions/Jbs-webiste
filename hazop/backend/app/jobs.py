@@ -20,7 +20,7 @@ from . import documents
 from . import knowledge as kb
 from . import risk
 from .config import CACHE_DIR, JOB_TTL_HOURS, JOBS_DIR, MAX_PID_PAGES, RENDER_DPI
-from .pipeline import ai, ocr, parse, render, rules
+from .pipeline import ai, ocr, parse, pfd, render, rules
 
 STAGES = [
     {"id": "upload", "label": "Upload received"},
@@ -381,7 +381,7 @@ def _learn_pfd(job_id, info):
             pages.append(page_ext)
     finally:
         drawing.close()
-    _update(job_id, detail="Reading the heat and material balance, then following the process stream")
+    _update(job_id, detail="Reading the equipment names at the top of the PFD, then following how the process proceeds")
     study = pfd.understand(pages)
     tags = [step["tag"] for step in study["route"] if step.get("tag")]
     return {
@@ -399,7 +399,9 @@ def _purpose_from_docs(pfd):
     route = [step["tag"] for step in study.get("route") or [] if step.get("tag")]
     focus = ", ".join(route[:6]) if route else (
         ", ".join((pfd or {}).get("tags") or []) or "the process equipment learned from the PFD")
-    flow = f" The PFD was read from its inlet and the stream was followed through {focus}." if route else ""
+    flow_text = ((study.get("process_flow") or "").strip())
+    flow = f" {flow_text}" if flow_text else (
+        f" The PFD was read from its inlet and the stream was followed through {focus}." if route else "")
     classes = list(kb.specs())
     class_note = ""
     if classes:
@@ -617,7 +619,14 @@ def _extract(job_id):
                     "No P&ID sheets could be read. Check that the pages are P&IDs with legible tags."
                 )
             purpose = _purpose_text(ext, pfd_learned, purpose)
-            _update(job_id, detail="P&ID read. Nodes will be studied one at a time, in node-number order.")
+            if pfd_learned and pfd_learned.get("study"):
+                sheets = [(item["page"], item["ext"]) for item in pending if item.get("ext")] if multi else [(0, ext)]
+                linked = pfd.relate(pfd_learned["study"], sheets)
+                pfd_learned["study"]["line_relation"] = linked["matches"]
+                pfd_learned["relation_note"] = linked["note"]
+                _update(job_id, detail="P&ID read. PFD streams are matched to the P&ID lines that join the same equipment.")
+            else:
+                _update(job_id, detail="P&ID read. Nodes will be studied one at a time, in node-number order.")
 
         warnings = []
         if total > count:
@@ -744,7 +753,8 @@ def _analyse(job_id):
             if purpose:
                 _update(job_id, detail=purpose[:180])
             t0 = time.time()
-            study = opts.get("study") or {}
+            study = dict(opts.get("study") or {})
+            study["line_relation"] = list((job.get("_pfd_study") or {}).get("line_relation") or [])
 
             def _on_plan(plan, where=""):
                 labels = []
@@ -824,6 +834,22 @@ def _analyse(job_id):
             notes = result.setdefault("assumptions", [])
             if job.get("_pfd_note") and job["_pfd_note"] not in notes:
                 notes.append(job["_pfd_note"])
+            relation = ((job.get("_pfd_study") or {}).get("line_relation"))
+            relation_note = None
+            if relation:
+                shown = []
+                for match in relation:
+                    if not match.get("pid_line"):
+                        continue
+                    stream = match.get("pfd_stream") or ""
+                    if re.fullmatch(r"\d{1,3}[A-Z]{0,2}", stream):
+                        shown.append(f"PFD stream {stream} is P&ID line {match['pid_line']}")
+                    else:
+                        shown.append(f"PFD line from {match.get('pfd_from')} to {match.get('pfd_to')} is P&ID line {match['pid_line']}")
+                if shown:
+                    relation_note = "PFD and P&ID lines: " + "; ".join(shown[:12]) + "."
+            if relation_note and relation_note not in notes:
+                notes.append(relation_note)
             if job.get("_pfd_study"):
                 result["pfd"] = job["_pfd_study"]
             matrix_note = job.get("_matrix_note") or risk.describe()

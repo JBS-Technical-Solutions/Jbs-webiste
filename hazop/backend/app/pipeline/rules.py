@@ -78,6 +78,7 @@ class Ctx:
         self.flare_sources = [c for c in self.connectors if c["direction"] == "source" and is_off_process(c)]
         self.release = ("high-pressure sour (H2S) flammable gas" if self.sour and self.gas else
                         "flammable hydrocarbon" if self.hydrocarbon else self.fluid)
+        self.line_relation = list(ext.get("line_relation") or [])
 
     # ---------------------------------------------------------- instrument queries
     def find(self, var=None, cats=None, has=None, letters=None):
@@ -841,6 +842,68 @@ def _equip_name(eq, fallback):
     return eq.get("tag") or fallback
 
 
+def _line_toward(ctx, box, side):
+    """The process line immediately left (side -1) or right (side +1) of a point on the P&ID."""
+    if not box:
+        return None
+    cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+    best, dist = None, None
+    for line in ctx.process_lines:
+        boxes = line.get("boxes") or ([line["box"]] if line.get("box") else [])
+        for candidate in boxes:
+            lx, ly = (candidate[0] + candidate[2]) / 2, (candidate[1] + candidate[3]) / 2
+            if abs(ly - cy) > 0.2:
+                continue
+            if side < 0 and lx >= cx - 0.005:
+                continue
+            if side > 0 and lx <= cx + 0.005:
+                continue
+            gap = abs(lx - cx)
+            if dist is None or gap < dist:
+                best, dist = line, gap
+    return best
+
+
+def _cause_ltr(ctx, box, anchor, failure):
+    """A cause written in the order the P&ID is read: left, then this point."""
+    left = _line_toward(ctx, box, -1)
+    if left:
+        return f"Reading the P&ID from left to right, {left['tag']} reaches {anchor}. {failure}"
+    return f"Reading the P&ID from left to right, flow from {ctx.src_text()} reaches {anchor}. {failure}"
+
+
+def _forward_match(ctx, tag, box):
+    """The PFD stream that continues to the right of this point, from the PFD–P&ID line relation."""
+    relation = getattr(ctx, "line_relation", None) or []
+    right = _line_toward(ctx, box, 1)
+    if right:
+        for match in relation:
+            if match.get("pid_line") and match["pid_line"] == right.get("tag"):
+                return match
+    tag_u = str(tag or "").upper()
+    if not tag_u:
+        return None
+    for match in relation:
+        if match.get("pid_line") and tag_u in str(match.get("pfd_from") or "").upper():
+            return match
+    return None
+
+
+def _cons_related(ctx, box, tag, effect):
+    """The local effect, then the PFD stream and P&ID line it travels on."""
+    effect = str(effect or "").rstrip(".")
+    match = _forward_match(ctx, tag, box)
+    if not match:
+        return effect + "."
+    stream = str(match.get("pfd_stream") or "")
+    dest = match.get("pfd_to") or "downstream"
+    if re.fullmatch(r"\d{1,3}[A-Z]{0,2}", stream):
+        carried = f"PFD stream {stream} on P&ID line {match['pid_line']}"
+    else:
+        carried = f"The PFD stream on P&ID line {match['pid_line']}"
+    return f"{effect}. {carried} carries that to {dest}."
+
+
 def _linked_valves(ctx, inst):
     loop = str(inst.get("loop") or "")
     if not loop:
@@ -923,7 +986,9 @@ def _specific_instrument_row(node, ctx, inst):
         cons = [f"The {limit or 'set'} {word} action at {here} does not happen, so {fluid} stays on the path toward {down}."]
     else:
         return
-    _place_row(node, deviation, cause, cons, _named_safeguards(ctx, inst), 4 if cat in ("trip", "relief") else 3, 2)
+    _place_row(node, deviation, _cause_ltr(ctx, inst.get("box"), tag, cause),
+               [_cons_related(ctx, inst.get("box"), here, item) for item in cons],
+               _named_safeguards(ctx, inst), 4 if cat in ("trip", "relief") else 3, 2)
 
 
 def _component_rows(node, ctx):
@@ -1017,7 +1082,7 @@ def equipment_node(ctx, eq, nid):
     if kind == "heater":
         supply_sg = supply_sg + skin_safeguards(ctx) + temp_trips
     closed_rows, open_rows = [], []
-    for item in cvs:
+    for item in sorted(cvs, key=lambda valve: _cx(valve)):
         name = item["tag"]
         cv_var = str(item.get("letters") or "")[:1]
         drum = _downstream_drum(ctx, item.get("box")) or eq
@@ -1026,28 +1091,32 @@ def equipment_node(ctx, eq, nid):
             level_eq = eq if kind in ("vessel", "tank") else drum
             closed_sg = trip_safeguards(ctx, "L", "H", level_eq)
             open_sg = trip_safeguards(ctx, "L", "L", level_eq)
-            closed_cons = [f"{name} closes on {tag}. The liquid outlet is blocked and the level rises. Liquid carries into the vapour outlet."]
-            open_cons = [f"{name} opens fully on {tag}. Liquid leaves the vessel and the liquid seal is lost. Gas blows through the liquid outlet."]
+            closed_effect = f"{name} fails closed on {tag}. The liquid outlet is blocked and the level rises. Liquid carries into the vapour outlet"
+            open_effect = f"{name} fails open on {tag}. Liquid leaves the vessel and the liquid seal is lost. Gas blows through the liquid outlet"
         elif cv_var == "P":
             closed_sg = trip_safeguards(ctx, "P", "L", eq)
             open_sg = relief_safeguards(ctx, drum) + trip_safeguards(ctx, "P", "H", drum)
-            closed_cons = [f"{name} closes. Flow of {ctx.fluid} through {tag} stops. Downstream equipment loses supply."]
-            open_cons = [f"{name} opens fully. Pressure letdown is lost and pressure at {drum_name} rises toward the upstream pressure. {drum_name} can be overpressured."]
+            closed_effect = f"{name} fails closed. Flow of {ctx.fluid} through {tag} stops"
+            open_effect = f"{name} fails open. Pressure letdown is lost and pressure at {drum_name} rises toward the upstream pressure. {drum_name} can be overpressured"
         elif kind == "heater":
             duty = f" ({d['duty_mmbtu_hr']} MMBtu/hr)" if d.get("duty_mmbtu_hr") else ""
             closed_sg = trip_safeguards(ctx, "P", "L", eq)
             open_sg = trip_safeguards(ctx, "T", "L", eq)
-            closed_cons = [f"{name} closes. Flow of {ctx.fluid} through {tag} stops while the heater can stay energised."]
-            open_cons = [f"{name} opens fully. Flow exceeds the heating capacity of {tag}{duty}. The outlet stays colder than intended and hydrate formation can follow."]
+            closed_effect = f"{name} fails closed. Flow of {ctx.fluid} through {tag} stops while the heater can stay energised"
+            open_effect = f"{name} fails open. Flow exceeds the heating capacity of {tag}{duty}. The outlet stays colder than intended and hydrate formation can follow"
         else:
             closed_sg = trip_safeguards(ctx, "P", "L", eq)
             open_sg = trip_safeguards(ctx, "P", "L", eq)
-            closed_cons = [f"{name} closes. Flow of {ctx.fluid} through {tag} stops. Downstream equipment loses supply."]
-            open_cons = [f"{name} opens fully. Flow through {tag} rises above the intended rate."]
-        closed_rows.append(row(f"{name} fails closed.", closed_cons,
-                                "S" if kind == "heater" else "A", closed_sg, 4 if kind == "heater" else 3, 3))
-        open_rows.append(row(f"{name} fails open.", open_cons,
-                              "S" if kind == "heater" or cv_var == "P" else "A", open_sg, 4 if cv_var == "P" else 3, 2))
+            closed_effect = f"{name} fails closed. Flow of {ctx.fluid} through {tag} stops"
+            open_effect = f"{name} fails open. Flow through {tag} rises above the intended rate"
+        closed_rows.append(row(
+            _cause_ltr(ctx, item.get("box"), name, f"{name} fails closed."),
+            [_cons_related(ctx, item.get("box"), tag, closed_effect)],
+            "S" if kind == "heater" else "A", closed_sg, 4 if kind == "heater" else 3, 3))
+        open_rows.append(row(
+            _cause_ltr(ctx, item.get("box"), name, f"{name} fails open."),
+            [_cons_related(ctx, item.get("box"), tag, open_effect)],
+            "S" if kind == "heater" or cv_var == "P" else "A", open_sg, 4 if cv_var == "P" else 3, 2))
     rec_flow = []
     if kind in ("heater", "pump", "compressor") and not _has_strong(flow_trips) and not _has_strong(supply_sg):
         panel = next((e["tag"] for e in ctx.equipment if e["kind"] == "panel"), f"the {label} control system")
@@ -1055,8 +1124,9 @@ def equipment_node(ctx, eq, nid):
             f"Confirm that {panel} includes a low-flow / flow-proving permissive that trips {tag} on loss of flow; "
             f"if not, provide a low-low flow trip (FSLL)."))
     devs.append(dev("No / Less Flow", [
-        row(f"Loss of supply from {ctx.src_text()}.",
-            [no_flow_cons, f"Loss of {ctx.fluid} supply to {ctx.dest_text()}."],
+        row(_cause_ltr(ctx, eq.get("box"), tag, "Supply on the line to the left stops."),
+            [_cons_related(ctx, eq.get("box"), tag, no_flow_cons.rstrip(".")),
+             _cons_related(ctx, eq.get("box"), tag, f"Loss of {ctx.fluid} supply downstream of {tag}")],
             "S" if kind in ("heater", "pump", "compressor") else "A", supply_sg, 4 if kind == "heater" else 3, 3, rec_flow),
         *closed_rows,
     ]))
@@ -1064,8 +1134,8 @@ def equipment_node(ctx, eq, nid):
         devs.append(dev("More Flow", open_rows))
 
     # ---- reverse flow
-    rev_rows = [row(f"Loss of upstream pressure while {ctx.dest_text()} remains pressurized.",
-                    [f"Backflow of {ctx.fluid} through {tag} to upstream supply; possible overpressure of lower-rated upstream equipment."],
+    rev_rows = [row(_cause_ltr(ctx, eq.get("box"), tag, "Upstream pressure is lost while the line to the right stays pressurized."),
+                    [_cons_related(ctx, eq.get("box"), tag, f"Backflow of {ctx.fluid} through {tag} toward the upstream side")],
                     "A", check_safeguards(ctx, eq), 3, 2,
                     [] if check_safeguards(ctx, eq) else [ctx.recs.add(f"Provide a check valve on the outlet of {tag} to prevent reverse flow.")])]
     if len(ctx.sources) >= 2:
@@ -1100,15 +1170,15 @@ def equipment_node(ctx, eq, nid):
         elif not psv_items:
             recs_.append(ctx.recs.add(f"Provide overpressure protection for {tag} (design {p_des} psig) against upstream source pressure."))
         hp_rows.append(row(
-            f"High supply pressure from {ctx.src_text()}. Piping spec {spec['spec']} is rated {spec['rating_psig']} psig but "
-            f"{tag} design pressure is {p_des} psig.",
-            [f"Overpressure of {tag} above design pressure; rupture and loss of containment of {ctx.release} - fire, explosion"
-             + (", toxic exposure" if ctx.sour else "") + ", possible fatality."],
+            _cause_ltr(ctx, eq.get("box"), tag,
+                       f"Supply pressure on the line to the left is high. Piping spec {spec['spec']} is rated {spec['rating_psig']} psig but {tag} design pressure is {p_des} psig."),
+            [_cons_related(ctx, eq.get("box"), tag,
+                           f"Overpressure of {tag} above design pressure; rupture and loss of containment of {ctx.release}")],
             "S", psv + trip_safeguards(ctx, "P", "H", eq), 5, 3, recs_))
     else:
         hp_rows.append(row(
-            f"High supply pressure from {ctx.src_text()}.",
-            [f"Overpressure of {tag}; possible loss of containment of {ctx.release}."],
+            _cause_ltr(ctx, eq.get("box"), tag, "Supply pressure on the line to the left is higher than the equipment design."),
+            [_cons_related(ctx, eq.get("box"), tag, f"Overpressure of {tag} and possible loss of containment of {ctx.release}")],
             "S", psv + trip_safeguards(ctx, "P", "H", eq), sev_loc, 2,
             [] if psv_items else [ctx.recs.add(f"Confirm overpressure protection of {tag} for the maximum upstream source pressure.")]))
     blocked_cause = f"Blocked outlet ({cv} fails closed or outlet valve closed)" if cv else "Blocked outlet (outlet valve closed)"
@@ -1129,8 +1199,8 @@ def equipment_node(ctx, eq, nid):
     devs.append(dev("High Pressure", hp_rows))
 
     devs.append(dev("Low Pressure", [
-        row(f"Loss of supply from {ctx.src_text()}" + (", or vent / drain valve left open to flare." if ctx.flare_lines else "."),
-            [f"Low pressure supply to {ctx.dest_text()} (operational)."], "A",
+        row(_cause_ltr(ctx, eq.get("box"), tag, "Pressure on the line to the left falls."),
+            [_cons_related(ctx, eq.get("box"), tag, f"Low pressure supply downstream of {tag}")], "A",
             trip_safeguards(ctx, "P", "L", eq), 2, 3),
     ]))
 
@@ -1181,14 +1251,16 @@ def equipment_node(ctx, eq, nid):
     if kind in ("vessel", "tank"):
         lsh = trip_safeguards(ctx, "L", "H", eq)
         lsl = trip_safeguards(ctx, "L", "L", eq)
-        devs.append(dev("High Level", [row(f"Level control failure or liquid outlet blocked on {tag}.",
-                                           [f"Liquid carry-over from {tag} to the gas outlet and downstream equipment."], "S",
-                                           lsh, 4, 3,
-                                           [] if _has_strong(lsh) else [ctx.recs.add(f"Provide an independent high-high level trip (LSHH) on {tag}.")])]))
-        devs.append(dev("Low Level", [row(f"Level control valve fails open on {tag}.",
-                                          [f"Liquid leaves {tag} and the liquid seal is lost. Gas blows through the liquid outlet and can overpressure the downstream liquid system."],
-                                          "S", lsl, 5, 3,
-                                          [] if _has_strong(lsl) else [ctx.recs.add(f"Provide an independent low-low level trip (LSLL) on {tag} to prevent gas blow-by.")])]))
+        devs.append(dev("High Level", [row(
+            _cause_ltr(ctx, eq.get("box"), tag, f"The liquid outlet of {tag} is blocked."),
+            [_cons_related(ctx, eq.get("box"), tag, f"Liquid carries over from {tag} into the gas outlet")], "S",
+            lsh, 4, 3,
+            [] if _has_strong(lsh) else [ctx.recs.add(f"Provide an independent high-high level trip (LSHH) on {tag}.")])]))
+        devs.append(dev("Low Level", [row(
+            _cause_ltr(ctx, eq.get("box"), tag, f"The level valve on {tag} fails open."),
+            [_cons_related(ctx, eq.get("box"), tag, f"Liquid leaves {tag} and gas blows through the liquid outlet")],
+            "S", lsl, 5, 3,
+            [] if _has_strong(lsl) else [ctx.recs.add(f"Provide an independent low-low level trip (LSLL) on {tag} to prevent gas blow-by.")])]))
 
     # ---- composition
     wet_src = [l for l in ctx.process_lines if l["service"] in ("P", "R")]
@@ -1280,28 +1352,27 @@ def control_valve_node(ctx, cvs, nid, heater):
         loss_sg = trip_safeguards(ctx, "L", "H", vessel)
         open_sg = trip_safeguards(ctx, "L", "L", vessel)
         devs.append(dev("High Level", [
-            row(f"{tag} fails closed on {up_name}.",
-                [f"The liquid outlet from {up_name} is blocked. Level rises and liquid carries into the vapour outlet."],
+            row(_cause_ltr(ctx, cv.get("box"), tag, f"{tag} fails closed."),
+                [_cons_related(ctx, cv.get("box"), up_name, f"The liquid outlet from {up_name} is blocked and liquid carries into the vapour outlet")],
                 "S", loss_sg, 4, 3),
-            row(_isolation_cause(ctx, cv.get("box"), tag),
-                [f"The liquid outlet from {up_name} is blocked. Level rises and liquid carries into the vapour outlet."],
+            row(_cause_ltr(ctx, cv.get("box"), tag, _isolation_cause(ctx, cv.get("box"), tag)),
+                [_cons_related(ctx, cv.get("box"), up_name, f"The liquid outlet from {up_name} is blocked and liquid carries into the vapour outlet")],
                 "S", loss_sg, 4, 2),
         ]))
         devs.append(dev("Low Level", [
-            row(f"{tag} fails open on {up_name}.",
-                [f"Liquid leaves {up_name} and the liquid seal is lost. Gas blows through the liquid outlet toward {down_name}."],
+            row(_cause_ltr(ctx, cv.get("box"), tag, f"{tag} fails open."),
+                [_cons_related(ctx, cv.get("box"), up_name, f"Liquid leaves {up_name} and gas blows through the liquid outlet")],
                 "S", open_sg, 5, 3),
         ]))
     else:
         loss_sg = trip_safeguards(ctx, "P", "L", drum)
         open_sg = relief_safeguards(ctx, drum) + trip_safeguards(ctx, "P", "H", drum)
         devs.append(dev("No / Less Flow", [
-            row(f"{tag} {fail_txt if fail == 'FC' else 'fails closed'} on the {ctx.fluid} line from {up_name} to {down_name}.",
-                [f"Flow of {ctx.fluid} from {up_name} to {down_name} stops. {down_name} loses supply.",
-                 f"{up_name} can be blocked in" + (f" while {heater['tag']} stays energised." if heater else ".")],
+            row(_cause_ltr(ctx, cv.get("box"), tag, f"{tag} {fail_txt if fail == 'FC' else 'fails closed'}."),
+                [_cons_related(ctx, cv.get("box"), tag, f"Flow of {ctx.fluid} from {up_name} to {down_name} stops")],
                 "A", loss_sg + (trip_safeguards(ctx, "T", "H", heater) if heater else []), 3, 3),
-            row(_isolation_cause(ctx, cv.get("box"), tag),
-                [f"Flow of {ctx.fluid} from {up_name} to {down_name} stops. {down_name} loses supply."], "A",
+            row(_cause_ltr(ctx, cv.get("box"), tag, _isolation_cause(ctx, cv.get("box"), tag)),
+                [_cons_related(ctx, cv.get("box"), tag, f"Flow of {ctx.fluid} from {up_name} to {down_name} stops")], "A",
                 loss_sg, 3, 2),
         ]))
 
@@ -1318,7 +1389,8 @@ def control_valve_node(ctx, cvs, nid, heater):
                 hp_cons.append(f"Outlet piping {down[0]['tag']} ({down[0]['rating']}, {down[0]['rating_psig']} psig) can be overpressured.")
         if heater:
             hp_cons.append(f"Flow through {heater['tag']} rises above its heating capacity and the outlet gas stays cold.")
-        more_rows = [row(f"{tag} fails open on the {ctx.fluid} line from {up_name} to {down_name}.", hp_cons, "S",
+        more_rows = [row(_cause_ltr(ctx, cv.get("box"), tag, f"{tag} fails open."),
+                         [_cons_related(ctx, cv.get("box"), tag, hp_cons[0].rstrip("."))], "S",
                          open_sg, 5, 3)]
         if bypass:
             more_rows.append(row(f"{tag} bypass globe valve {ctx.names(bypass[:1])} opened in error or left open after maintenance.",
@@ -1327,13 +1399,15 @@ def control_valve_node(ctx, cvs, nid, heater):
                                  [ctx.recs.add(f"Lock closed the {tag} bypass valve {ctx.names(bypass[:1])} and include it in the lock register.")]))
         devs.append(dev("More Flow / High Pressure", more_rows))
 
-    devs.append(dev("Reverse Flow", [row(f"Loss of upstream pressure while {dest} remains pressurized.",
-                                         [f"Backflow through {tag} into upstream equipment and supply lines."], "A",
-                                         check_safeguards(ctx, drum), 3, 2,
-                                         [] if check_safeguards(ctx, drum) else [ctx.recs.add(f"Provide a check valve so {tag} cannot pass reverse flow.")])]))
-    devs.append(dev("Low Pressure", [row(f"{tag} closes or upstream supply is lost.",
-                                         [f"Pressure falls at {down_name}. Downstream users lose {ctx.fluid} supply."], "A",
-                                         trip_safeguards(ctx, "P", "L", drum), 2, 3)]))
+    devs.append(dev("Reverse Flow", [row(
+        _cause_ltr(ctx, cv.get("box"), tag, "Upstream pressure is lost while the line to the right stays pressurized."),
+        [_cons_related(ctx, cv.get("box"), tag, f"Backflow through {tag} toward the upstream side")], "A",
+        check_safeguards(ctx, drum), 3, 2,
+        [] if check_safeguards(ctx, drum) else [ctx.recs.add(f"Provide a check valve so {tag} cannot pass reverse flow.")])]))
+    devs.append(dev("Low Pressure", [row(
+        _cause_ltr(ctx, cv.get("box"), tag, f"{tag} closes or the line to the left loses supply."),
+        [_cons_related(ctx, cv.get("box"), tag, f"Pressure falls at {down_name}")], "A",
+        trip_safeguards(ctx, "P", "L", drum), 2, 3)]))
 
     if ctx.gas:
         tsl = trip_safeguards(ctx, "T", "L")
@@ -2041,6 +2115,7 @@ def _compile_parts(pieces, source):
 
 def _worksheet(ext, study, plan, source):
     ctx = Ctx(ext)
+    ctx.line_relation = list((study or {}).get("line_relation") or ext.get("line_relation") or [])
     main_eq = _main_equipment(ext)
     nodes = [_build(ctx, ext, entry, i) for i, entry in enumerate(plan, 1)]
 
