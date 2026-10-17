@@ -124,9 +124,6 @@ export default function ReactorDiagram({ T_in, P_in, profile = [], P_out, T_heat
         <text x="712" y="46" textAnchor="end" className="rx-sub">
           {bar(P_out)}
         </text>
-        <text x={(JACKET.x0 + JACKET.x1) / 2} y="58" textAnchor="middle" fill={cHeat} className="hx-label">
-          Heating jacket {T_heat.toFixed(0)}°C
-        </text>
       </svg>
       <figcaption>
         <span>Packed-bed tubular reactor · CH₃OH → CO + 2H₂ · temperature probes along the bed</span>

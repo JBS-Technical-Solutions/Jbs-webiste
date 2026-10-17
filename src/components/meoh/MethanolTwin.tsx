@@ -264,10 +264,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
 
             <dl className="rx-specs">
               <div>
-                <dt>Jacket temperature</dt>
-                <dd>{fmt(T_heat, 0)} °C</dd>
-              </div>
-              <div>
                 <dt>Bed voidage</dt>
                 <dd>{fmt(info?.reactor.epsilon ?? 0.33, 2)}</dd>
               </div>
@@ -357,7 +353,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
 
             <footer className="result-foot">
               <span>CH₃OH → CO + 2H₂</span>
-              <span>Trained on {info?.rows ?? "—"} operating points</span>
             </footer>
           </section>
         </div>
@@ -372,7 +367,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
             }))}
             selected={model}
             onSelect={setModel}
-            T_heat={T_heat}
           />
         )}
 

@@ -23,14 +23,12 @@ export default function AxialProfile<K extends string>({
   series,
   selected,
   onSelect,
-  T_heat,
 }: {
   series: ProfileSeries<K>[];
   selected: K;
   onSelect: (m: K) => void;
-  T_heat: number;
 }) {
-  const values = [T_heat, ...series.flatMap((s) => s.temps)].filter(
+  const values = series.flatMap((s) => s.temps).filter(
     (v): v is number => v != null && Number.isFinite(v),
   );
   const lo = Math.min(...values);
@@ -51,7 +49,7 @@ export default function AxialProfile<K extends string>({
         <h3>Axial temperature profile</h3>
         <p>
           Bed temperature from the inlet (0 m) to the outlet (1 m) for every model. The inlet point is your feed
-          temperature; the dashed line is the heating jacket. Click a legend entry to select that model.
+          temperature. Click a legend entry to select that model.
         </p>
       </div>
 
@@ -80,11 +78,6 @@ export default function AxialProfile<K extends string>({
           className="rx-axis-title"
         >
           Temperature (°C)
-        </text>
-
-        <line x1={BOX.x0} x2={BOX.x1} y1={y(T_heat)} y2={y(T_heat)} className="rx-heater" />
-        <text x={BOX.x1 - 4} y={y(T_heat) - 6} textAnchor="end" className="rx-heater-label">
-          Jacket {T_heat.toFixed(0)}°C
         </text>
 
         {ordered.map((s) => {
