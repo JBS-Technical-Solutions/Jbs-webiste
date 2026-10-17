@@ -135,15 +135,16 @@ export default function MethanolTwin({ className = "" }: { className?: string })
   const ref = result?.physics_ref ?? null;
   const T_heat = info?.reactor.T_heat_C ?? T_HEAT_DEFAULT;
   const dP = out && ranInputs ? ranInputs.P_in_bar_g - out.P_out_bar_g : null;
+  const rx = info?.reactor;
+  const bedArea = rx ? (Math.PI * rx.D_m * rx.D_m) / 4 : null;
+  const bedVolume = bedArea != null && rx ? bedArea * rx.L_m : null;
+  const specificSurface = rx ? (6 * (1 - rx.epsilon)) / rx.dp_m : null;
 
   const update = (key: keyof TwinInputs, raw: string) => {
     setInputs((prev) => ({ ...prev, [key]: Number(raw) }));
   };
 
-  const range = (key: keyof TwinInputs, digits = 0) => {
-    const r = info?.training_ranges[key];
-    return r ? `trained ${fmt(r.min, digits)} – ${fmt(r.max, digits)}` : null;
-  };
+  const limit = (max: number, digits = 0) => `0 – ${fmt(max, digits)}`;
 
   return (
     <div className={`hx-app meoh-app ${className}`}>
@@ -221,14 +222,15 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               <div className="field-row">
                 <input
                   type="number"
-                  step="10"
-                  min="1"
+                  step="any"
+                  min="0"
+                  max="1000"
                   value={inputs.T_in_C}
                   onChange={(e) => update("T_in_C", e.target.value)}
                 />
                 <em>°C</em>
               </div>
-              {range("T_in_C") && <small className="field-hint">{range("T_in_C")}</small>}
+              <small className="field-hint">{limit(1000)}</small>
             </label>
 
             <label className="field">
@@ -236,14 +238,15 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               <div className="field-row">
                 <input
                   type="number"
-                  step="0.1"
+                  step="any"
                   min="0"
+                  max="50"
                   value={inputs.P_in_bar_g}
                   onChange={(e) => update("P_in_bar_g", e.target.value)}
                 />
                 <em>bar_g</em>
               </div>
-              {range("P_in_bar_g", 1) && <small className="field-hint">{range("P_in_bar_g", 1)}</small>}
+              <small className="field-hint">{limit(50, 0)}</small>
             </label>
 
             <label className="field">
@@ -251,14 +254,15 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               <div className="field-row">
                 <input
                   type="number"
-                  step="0.05"
-                  min="0.01"
+                  step="any"
+                  min="0"
+                  max="50"
                   value={inputs.F_in_kgmole_h}
                   onChange={(e) => update("F_in_kgmole_h", e.target.value)}
                 />
                 <em>kgmole/h</em>
               </div>
-              {range("F_in_kgmole_h", 1) && <small className="field-hint">{range("F_in_kgmole_h", 1)}</small>}
+              <small className="field-hint">{limit(50)}</small>
             </label>
 
             {error && status !== "offline" && (
@@ -333,6 +337,49 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                 {signed(out.T_10 - ref.T_10)}° · conversion {signed(out.X_pct - ref.X_pct, 3)} pts · P out{" "}
                 {signed(out.P_out_bar_g - ref.P_out_bar_g, 3)} bar · duty {signed(out.Q_kW - ref.Q_kW, 3)} kW
               </p>
+            )}
+
+            {rx && (
+              <div className="hydraulics">
+                <p className="hydraulics-head">
+                  Reactor geometry
+                  <em> · constant for every operating point</em>
+                </p>
+                <dl>
+                  <div>
+                    <dt>Tube diameter</dt>
+                    <dd>{fmt(rx.D_m, 2)} <small>m</small></dd>
+                  </div>
+                  <div>
+                    <dt>Bed length</dt>
+                    <dd>{fmt(rx.L_m, 1)} <small>m</small></dd>
+                  </div>
+                  <div>
+                    <dt>Particle diameter</dt>
+                    <dd>{fmt(rx.dp_m * 1000, 1)} <small>mm</small></dd>
+                  </div>
+                  <div>
+                    <dt>Bed voidage</dt>
+                    <dd>{fmt(rx.epsilon, 2)}</dd>
+                  </div>
+                  <div>
+                    <dt>Cross section</dt>
+                    <dd>{fmt(bedArea, 4)} <small>m²</small></dd>
+                  </div>
+                  <div>
+                    <dt>Bed volume</dt>
+                    <dd>{fmt(bedVolume, 4)} <small>m³</small></dd>
+                  </div>
+                  <div>
+                    <dt>Specific surface</dt>
+                    <dd>{fmt(specificSurface, 0)} <small>1/m</small></dd>
+                  </div>
+                  <div>
+                    <dt>Jacket-side HTC</dt>
+                    <dd>{fmt(rx.h_heat_W_m2K, 0)} <small>W/m²·K</small></dd>
+                  </div>
+                </dl>
+              </div>
             )}
 
             {result && result.warnings.length > 0 && (

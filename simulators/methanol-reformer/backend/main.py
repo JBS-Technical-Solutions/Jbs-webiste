@@ -46,9 +46,9 @@ INPUT_LABELS = {
 
 
 class TwinInputs(BaseModel):
-    T_in_C: float = Field(gt=0, le=1000, description="Inlet temperature (°C)")
+    T_in_C: float = Field(ge=0, le=1000, description="Inlet temperature (°C)")
     P_in_bar_g: float = Field(ge=0, le=50, description="Inlet pressure (bar_g)")
-    F_in_kgmole_h: float = Field(gt=0, le=50, description="Methanol molar flow (kgmole/h)")
+    F_in_kgmole_h: float = Field(ge=0, le=50, description="Methanol molar flow (kgmole/h)")
 
 
 class PredictRequest(BaseModel):
