@@ -1,12 +1,32 @@
 "use client";
 
-import { tempColor } from "../hx/ExchangerDiagram";
+const COLOR_STOPS: [number, [number, number, number]][] = [
+  [20, [62, 207, 207]],
+  [60, [95, 211, 160]],
+  [110, [240, 199, 94]],
+  [180, [255, 138, 61]],
+  [240, [255, 77, 61]],
+  [300, [214, 32, 74]],
+];
+
+function tempColor(t: number | undefined) {
+  if (t == null || !Number.isFinite(t)) return "rgb(120, 140, 160)";
+  if (t <= COLOR_STOPS[0][0]) return `rgb(${COLOR_STOPS[0][1].join(",")})`;
+  for (let i = 1; i < COLOR_STOPS.length; i++) {
+    const [t1, c1] = COLOR_STOPS[i];
+    if (t <= t1) {
+      const [t0, c0] = COLOR_STOPS[i - 1];
+      const k = (t - t0) / (t1 - t0);
+      return `rgb(${c0.map((c, j) => Math.round(c + (c1[j] - c) * k)).join(",")})`;
+    }
+  }
+  return `rgb(${COLOR_STOPS[COLOR_STOPS.length - 1][1].join(",")})`;
+}
 
 type Props = {
   T_in?: number;
   P_in?: number;
   profile?: (number | undefined)[];
-  P_out?: number;
   T_heat: number;
   animate: boolean;
 };
@@ -40,7 +60,7 @@ function bar(p: number | undefined) {
   return p != null && Number.isFinite(p) ? `${p.toFixed(3)} bar_g` : "—";
 }
 
-export default function ReactorDiagram({ T_in, P_in, profile = [], P_out, T_heat, animate }: Props) {
+export default function ReactorDiagram({ T_in, P_in, profile = [], T_heat, animate }: Props) {
   const T_out = profile[profile.length - 1];
   const stops = [T_in, ...SENSOR_Z.map((_, i) => profile[i])];
   const cHeat = tempColor(T_heat);
@@ -118,18 +138,12 @@ export default function ReactorDiagram({ T_in, P_in, profile = [], P_out, T_heat
         <text x="8" y="46" textAnchor="start" className="rx-sub">
           {bar(P_in)}
         </text>
-        <text x="712" y="30" textAnchor="end" fill={tempColor(T_out)} className="hx-label">
-          CO + 2H₂ out {temp(T_out)}
-        </text>
-        <text x="712" y="46" textAnchor="end" className="rx-sub">
-          {bar(P_out)}
-        </text>
       </svg>
       <figcaption>
-        <span>Packed-bed tubular reactor · CH₃OH → CO + 2H₂ · temperature probes along the bed</span>
+        <span>Packed-bed tubular reactor · temperature probes along the bed</span>
         <span className="hx-scale" aria-hidden>
           <i />
-          20°C → 700°C
+          20°C → 300°C
         </span>
       </figcaption>
     </figure>

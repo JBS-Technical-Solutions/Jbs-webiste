@@ -287,7 +287,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               T_in={ranInputs?.T_in_C}
               P_in={ranInputs?.P_in_bar_g}
               profile={PROFILE_KEYS.map((k) => out?.[k])}
-              P_out={out?.P_out_bar_g}
               T_heat={T_heat}
               animate={out != null}
             />
