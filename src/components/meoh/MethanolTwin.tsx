@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Logo from "../Logo";
 import ModelHistograms, { type HistogramVariable } from "../hx/ModelHistograms";
-import AxialProfile from "./AxialProfile";
 import ReactorDiagram from "./ReactorDiagram";
 import {
   BACKEND_OFFLINE,
@@ -20,11 +19,11 @@ import {
 import "../hx/hx.css";
 import "./meoh.css";
 
-const MODELS: Record<ModelKind, { title: string; blurb: string; color: string }> = {
-  physics: { title: "Physics", blurb: "LHHW kinetics → plug-flow ODEs → axial profile", color: "#6f9fd4" },
-  serial: { title: "Serial Hybrid", blurb: "Physics ODEs with a learned reaction rate", color: "#3ecfcf" },
-  parallel: { title: "Parallel Hybrid", blurb: "Physics baseline plus an ML residual", color: "#f0c75e" },
-  pinn: { title: "PINN", blurb: "Physics-Informed Neural Network", color: "#ff6a3d" },
+const MODELS: Record<ModelKind, { title: string; blurb: string }> = {
+  physics: { title: "Physics", blurb: "LHHW kinetics → plug-flow ODEs → axial profile" },
+  serial: { title: "Serial Hybrid", blurb: "Physics ODEs with a learned reaction rate" },
+  parallel: { title: "Parallel Hybrid", blurb: "Physics baseline plus an ML residual" },
+  pinn: { title: "PINN", blurb: "Physics-Informed Neural Network" },
 };
 
 const T_HEAT_DEFAULT = 275;
@@ -141,9 +140,9 @@ export default function MethanolTwin({ className = "" }: { className?: string })
     setInputs((prev) => ({ ...prev, [key]: Number(raw) }));
   };
 
-  const range = (key: keyof TwinInputs, digits: number) => {
+  const range = (key: keyof TwinInputs, digits = 0) => {
     const r = info?.training_ranges[key];
-    return r ? `data range ${fmt(r.min, digits)} – ${fmt(r.max, digits)}` : null;
+    return r ? `trained ${fmt(r.min, digits)} – ${fmt(r.max, digits)}` : null;
   };
 
   return (
@@ -213,8 +212,8 @@ export default function MethanolTwin({ className = "" }: { className?: string })
             }}
           >
             <div className="panel-head">
-              <h3>Feed conditions</h3>
-              <p>Pure methanol feed to the reactor inlet</p>
+              <h3>Operating inputs</h3>
+              <p>Temperature in °C · pressure in bar_g · flow in kgmole/h</p>
             </div>
 
             <label className="field">
@@ -229,7 +228,7 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                 />
                 <em>°C</em>
               </div>
-              {range("T_in_C", 0) && <small className="field-hint">{range("T_in_C", 0)}</small>}
+              {range("T_in_C") && <small className="field-hint">{range("T_in_C")}</small>}
             </label>
 
             <label className="field">
@@ -261,13 +260,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               </div>
               {range("F_in_kgmole_h", 1) && <small className="field-hint">{range("F_in_kgmole_h", 1)}</small>}
             </label>
-
-            <dl className="rx-specs">
-              <div>
-                <dt>Bed voidage</dt>
-                <dd>{fmt(info?.reactor.epsilon ?? 0.33, 2)}</dd>
-              </div>
-            </dl>
 
             {error && status !== "offline" && (
               <div className="banner error compact" role="alert">
@@ -306,17 +298,22 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               <article className="metric hero-metric">
                 <span>Outlet temperature</span>
                 <strong>{fmt(out?.T_10)}</strong>
-                <em>°C at 1.0 m</em>
+                <em>°C</em>
               </article>
               <article className="metric">
-                <span>Methanol conversion</span>
-                <strong>{fmt(out?.X_pct, out && out.X_pct < 10 ? 3 : 2)}</strong>
+                <span>Conversion</span>
+                <strong>{fmt(out?.X_pct, 2)}</strong>
                 <em>%</em>
               </article>
               <article className="metric">
                 <span>H₂ produced</span>
-                <strong>{fmt(h2Produced(result, ranInputs), 2)}</strong>
+                <strong>{fmt(h2Produced(result, ranInputs), 1)}</strong>
                 <em>mol/h</em>
+              </article>
+              <article className="metric">
+                <span>Duty</span>
+                <strong>{fmt(out?.Q_kW)}</strong>
+                <em>kW</em>
               </article>
               <article className="metric">
                 <span>Outlet pressure</span>
@@ -327,11 +324,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                 <span>Pressure drop</span>
                 <strong>{fmt(dP != null ? dP * 1000 : null, 1)}</strong>
                 <em>mbar</em>
-              </article>
-              <article className="metric">
-                <span>Heat duty</span>
-                <strong>{fmt(out?.Q_kW, 3)}</strong>
-                <em>kW · heat into the reactor</em>
               </article>
             </div>
 
@@ -353,22 +345,12 @@ export default function MethanolTwin({ className = "" }: { className?: string })
 
             <footer className="result-foot">
               <span>CH₃OH → CO + 2H₂</span>
+              <span>
+                D {fmt(info?.reactor.D_m ?? 0.1, 2)} m · L {fmt(info?.reactor.L_m ?? 1, 1)} m
+              </span>
             </footer>
           </section>
         </div>
-
-        {results && ranInputs && (
-          <AxialProfile
-            series={results.map((r) => ({
-              model: r.model,
-              label: MODELS[r.model].title,
-              color: MODELS[r.model].color,
-              temps: [ranInputs.T_in_C, ...PROFILE_KEYS.map((k) => r.outputs?.[k])],
-            }))}
-            selected={model}
-            onSelect={setModel}
-          />
-        )}
 
         {results && (
           <section className="panel compare">
@@ -381,12 +363,10 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                 <thead>
                   <tr>
                     <th>Model</th>
-                    <th>T 0.2 m (°C)</th>
-                    <th>T 0.6 m (°C)</th>
                     <th>T out (°C)</th>
                     <th>Conversion (%)</th>
                     <th>P out (bar_g)</th>
-                    <th>Heat duty (kW)</th>
+                    <th>Duty (kW)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -397,12 +377,10 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                       onClick={() => setModel(r.model)}
                     >
                       <td>{MODELS[r.model].title}</td>
-                      <td>{fmt(r.outputs?.T_02)}</td>
-                      <td>{fmt(r.outputs?.T_06)}</td>
                       <td>{fmt(r.outputs?.T_10)}</td>
-                      <td>{fmt(r.outputs?.X_pct, 3)}</td>
+                      <td>{fmt(r.outputs?.X_pct)}</td>
                       <td>{fmt(r.outputs?.P_out_bar_g, 3)}</td>
-                      <td>{fmt(r.outputs?.Q_kW, 3)}</td>
+                      <td>{fmt(r.outputs?.Q_kW)}</td>
                     </tr>
                   ))}
                 </tbody>
