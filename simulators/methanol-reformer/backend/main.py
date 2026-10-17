@@ -33,8 +33,8 @@ MODEL_ORDER: list[ModelKind] = ["physics", "serial", "parallel", "pinn"]
 
 MODEL_META = {
     "physics": ("Physics", "LHHW kinetics → plug-flow ODEs (mass, energy, Ergun) → axial profile", PHYSICS_NB.name),
-    "serial": ("Serial Hybrid", "Calibrated physics (η) → ML corrects the remaining error", SERIAL_NB.name),
-    "parallel": ("Parallel Hybrid", "Calibrated physics ‖ ML, blended per output", PARALLEL_NB.name),
+    "serial": ("Serial Hybrid", "Physics ODEs with a learned reaction rate inside", SERIAL_NB.name),
+    "parallel": ("Parallel Hybrid", "Physics baseline plus an ML correction of its error", PARALLEL_NB.name),
     "pinn": ("PINN", "Physics-Informed Neural Network", PINN_NB.name),
 }
 

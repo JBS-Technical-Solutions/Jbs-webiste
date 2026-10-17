@@ -24,8 +24,14 @@ const HeatExchangerTwin = dynamic(() => import("./hx/HeatExchangerTwin"), {
   loading: LoadingSimulation,
 });
 
+const MethanolTwin = dynamic(() => import("./meoh/MethanolTwin"), {
+  ssr: false,
+  loading: LoadingSimulation,
+});
+
 const SIMULATIONS: Partial<Record<EquipmentModel["slug"], typeof HeatExchangerTwin>> = {
   "heat-exchanger": HeatExchangerTwin,
+  "methanol-reformer": MethanolTwin,
 };
 
 const order: EquipmentModel["slug"][] = ["heat-exchanger", "pump", "methanol-reformer"];

@@ -97,4 +97,4 @@ export function compareModels(inputs: TwinInputs) {
   return request<TwinOutput[]>("/compare", { method: "POST", body: JSON.stringify(inputs) });
 }
 
-export const DEFAULT_INPUTS: TwinInputs = { T_in_C: 350, P_in_bar_g: 2, F_in_kgmole_h: 0.85 };
+export const DEFAULT_INPUTS: TwinInputs = { T_in_C: 230, P_in_bar_g: 2, F_in_kgmole_h: 0.85 };

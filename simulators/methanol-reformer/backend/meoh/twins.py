@@ -15,25 +15,29 @@ OUTPUT_COLS = [
 ]
 INPUT_COLS = ["T_in_C", "P_in_bar_g", "F_in_kgmole_h"]
 
-PHYSICS_FUNCS = {"bar_g_to_Pa", "Pa_to_bar_g", "kgmole_h_to_mol_s", "reaction_rate", "reactor_model"}
-HYBRID_FUNCS = PHYSICS_FUNCS | {"predict_physics", "physics_vector"}
+SHARED = {
+    "bar_g_to_Pa", "Pa_to_bar_g", "kgmole_h_to_mol_s",
+    "bed_side_htc", "overall_U", "reaction_enthalpy",
+}
 
 
 def physics_namespace() -> dict:
-    return load_definitions(PHYSICS_NB, PHYSICS_FUNCS | {"predict_outputs"})
+    return load_definitions(PHYSICS_NB, SHARED | {"reaction_rate", "reactor_model", "predict_outputs"})
 
 
 def serial_namespace(artifact: dict) -> dict:
     return load_definitions(
-        SERIAL_NB, HYBRID_FUNCS | {"build_features", "clip_outputs", "predict_outputs"},
-        ETA=artifact["ETA"], multi_residual_model=artifact["model"],
+        SERIAL_NB,
+        SHARED | {"concentrations", "reactor_model", "simulate", "rate_learned", "predict_outputs"},
+        kinetics_model=artifact["kinetics_model"],
     )
 
 
 def parallel_namespace(artifact: dict) -> dict:
     return load_definitions(
-        PARALLEL_NB, HYBRID_FUNCS | {"combine_parallel", "clip_parallel", "predict_outputs"},
-        ETA=artifact["ETA"], ml_model=artifact["ml_model"], W=artifact["W"],
+        PARALLEL_NB,
+        SHARED | {"reaction_rate", "reactor_model", "predict_physics", "physics_vector", "clip_hybrid", "predict_outputs"},
+        ETA=artifact["ETA"], residual_model=artifact["residual_model"],
     )
 
 

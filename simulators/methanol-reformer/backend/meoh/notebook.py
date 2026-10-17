@@ -15,11 +15,11 @@ import matplotlib
 matplotlib.use("Agg")
 
 ROOT = Path(__file__).resolve().parents[2]
-DATA_PATH = ROOT / "DATA.xlsx"
-PHYSICS_NB = ROOT / "Physics Model_1.ipynb"
-SERIAL_NB = ROOT / "A1_Serial Digital Twin.ipynb"
-PARALLEL_NB = ROOT / "Parallel Digital Twin.ipynb"
-PINN_NB = ROOT / "PINN Digital Twin.ipynb"
+DATA_PATH = ROOT / "DATA_clean.csv"
+PHYSICS_NB = ROOT / "revised_Physics Model_1.ipynb"
+SERIAL_NB = ROOT / "Revised_A2_Serial Digital Twin.ipynb"
+PARALLEL_NB = ROOT / "Parallel_Residual_Hybrid_Digital_Twin.ipynb"
+PINN_NB = ROOT / "Revised_PINN Digital Twin.ipynb"
 
 
 def code_cells(notebook: Path) -> list[str]:
@@ -33,7 +33,7 @@ def code_cells(notebook: Path) -> list[str]:
 
 @contextlib.contextmanager
 def _in_notebook_dir():
-    # The notebooks open DATA.xlsx by relative path.
+    # The notebooks open DATA_clean.csv by relative path.
     cwd = os.getcwd()
     os.chdir(ROOT)
     try:

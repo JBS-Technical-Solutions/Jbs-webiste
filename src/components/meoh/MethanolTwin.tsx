@@ -22,8 +22,8 @@ import "./meoh.css";
 
 const MODELS: Record<ModelKind, { title: string; blurb: string; color: string }> = {
   physics: { title: "Physics", blurb: "LHHW kinetics → plug-flow ODEs → axial profile", color: "#6f9fd4" },
-  serial: { title: "Serial Hybrid", blurb: "Calibrated physics, ML corrects the error", color: "#3ecfcf" },
-  parallel: { title: "Parallel Hybrid", blurb: "Calibrated physics ‖ ML, blended per output", color: "#f0c75e" },
+  serial: { title: "Serial Hybrid", blurb: "Physics ODEs with a learned reaction rate", color: "#3ecfcf" },
+  parallel: { title: "Parallel Hybrid", blurb: "Physics baseline plus an ML residual", color: "#f0c75e" },
   pinn: { title: "PINN", blurb: "Physics-Informed Neural Network", color: "#ff6a3d" },
 };
 
@@ -335,7 +335,7 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               <article className="metric">
                 <span>Heat duty</span>
                 <strong>{fmt(out?.Q_kW, 3)}</strong>
-                <em>kW · negative = heat lost</em>
+                <em>kW · heat into the reactor</em>
               </article>
             </div>
 
