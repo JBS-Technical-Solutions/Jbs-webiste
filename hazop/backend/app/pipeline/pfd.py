@@ -577,7 +577,6 @@ def _flow_sentence(start, route):
             previous = route[index - 1]["name"]
             lead = f"From {previous} the stream continues to {name}{tag}."
         sentences.append(f"{lead} {name} is {step['what']}, used {step['used_for']}. On this PFD it {step['doing']}.{move}{change}")
-    sentences.append("That is the order in which the process proceeds on this PFD.")
     return " ".join(sentences)
 
 
@@ -614,14 +613,12 @@ def note(name, study, pages_read, pages_total):
     """A short worksheet note. The full reading stays on the study for the later steps."""
     start = study["start"]["text"]
     where = f"the inlet ({start})" if study["start"]["kind"] == "inlet" else start
-    parts = [
-        f"The PFD '{name}' was read from the equipment names written at the top of the sheet, starting at {where}. "
-    ]
+    parts = []
     flow = (study.get("process_flow") or "").strip()
     if flow:
         parts.append(flow + " ")
     else:
-        parts.append(f"All {study['word_count']} words on the sheet were kept. ")
+        parts.append(f"The PFD '{name}' starts at {where}. ")
     balance = study["balance"]
     if balance["found"]:
         parts.append(

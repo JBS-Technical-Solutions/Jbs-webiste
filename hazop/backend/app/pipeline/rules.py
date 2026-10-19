@@ -381,7 +381,7 @@ def _node_description(ctx, color=None):
             through.append(_join_tags([v.get("tag") for v in on_path]))
         route_lines = _lines_on_route(ctx, source, target)
         where = f" on {_and([_line_phrase(ctx, line) for line in route_lines[:2]])}" if route_lines else ""
-        lead = f"Reading left to right, the {fluid} line" if index == 0 else f"Another {fluid} line"
+        lead = f"{fluid.capitalize()} line" if index == 0 else f"Another {fluid} line"
         origin = _conn_name(source)
         if through and target:
             sentences.append(f"{lead}{where} from {origin} going through {', '.join(through)} to {target['tag']}.")
@@ -406,8 +406,6 @@ def _node_description(ctx, color=None):
     elif not sentences:
         sentences.append(f"{fluid.capitalize()} from {ctx.src_text()} to {ctx.dest_text()}.")
     text = " ".join(sentences)
-    if color:
-        text += f" The {color} node line was followed for this summary."
     return text
 
 
@@ -905,11 +903,12 @@ def _line_toward(ctx, box, side):
 
 
 def _cause_ltr(ctx, box, anchor, failure):
-    """A cause written in the order the P&ID is read: left, then this point."""
+    """Name the line that reaches this point, without a reading instruction."""
+    failure = str(failure).strip().rstrip(".")
     left = _line_toward(ctx, box, -1)
-    if left:
-        return f"Reading the P&ID from left to right, {left['tag']} reaches {anchor}. {failure}"
-    return f"Reading the P&ID from left to right, flow from {ctx.src_text()} reaches {anchor}. {failure}"
+    if left and left["tag"] not in failure:
+        return f"{failure} on {left['tag']} at {anchor}."
+    return f"{failure}."
 
 
 def _forward_match(ctx, tag, box):
@@ -1164,7 +1163,7 @@ def equipment_node(ctx, eq, nid):
             f"Confirm that {panel} includes a low-flow / flow-proving permissive that trips {tag} on loss of flow; "
             f"if not, provide a low-low flow trip (FSLL)."))
     devs.append(dev("No / Less Flow", [
-        row(_cause_ltr(ctx, eq.get("box"), tag, "Supply on the line to the left stops."),
+        row(_cause_ltr(ctx, eq.get("box"), tag, "Loss of supply."),
             [_cons_related(ctx, eq.get("box"), tag, no_flow_cons.rstrip(".")),
              _cons_related(ctx, eq.get("box"), tag, f"Loss of {ctx.fluid} supply downstream of {tag}")],
             "S" if kind in ("heater", "pump", "compressor") else "A", supply_sg, 4 if kind == "heater" else 3, 3, rec_flow),
@@ -1174,7 +1173,7 @@ def equipment_node(ctx, eq, nid):
         devs.append(dev("More Flow", open_rows))
 
     # ---- reverse flow
-    rev_rows = [row(_cause_ltr(ctx, eq.get("box"), tag, "Upstream pressure is lost while the line to the right stays pressurized."),
+    rev_rows = [row(_cause_ltr(ctx, eq.get("box"), tag, "Loss of upstream pressure while downstream stays pressurized."),
                     [_cons_related(ctx, eq.get("box"), tag, f"Backflow of {ctx.fluid} through {tag} toward the upstream side")],
                     "A", check_safeguards(ctx, eq), 3, 2,
                     [] if check_safeguards(ctx, eq) else [ctx.recs.add(f"Provide a check valve on the outlet of {tag} to prevent reverse flow.")])]
@@ -1211,13 +1210,13 @@ def equipment_node(ctx, eq, nid):
             recs_.append(ctx.recs.add(f"Provide overpressure protection for {tag} (design {p_des} psig) against upstream source pressure."))
         hp_rows.append(row(
             _cause_ltr(ctx, eq.get("box"), tag,
-                       f"Supply pressure on the line to the left is high. Piping spec {spec['spec']} is rated {spec['rating_psig']} psig but {tag} design pressure is {p_des} psig."),
+                       f"High supply pressure. Piping spec {spec['spec']} is rated {spec['rating_psig']} psig but {tag} design pressure is {p_des} psig."),
             [_cons_related(ctx, eq.get("box"), tag,
                            f"Overpressure of {tag} above design pressure; rupture and loss of containment of {ctx.release}")],
             "S", psv + trip_safeguards(ctx, "P", "H", eq), 5, 3, recs_))
     else:
         hp_rows.append(row(
-            _cause_ltr(ctx, eq.get("box"), tag, "Supply pressure on the line to the left is higher than the equipment design."),
+            _cause_ltr(ctx, eq.get("box"), tag, "High supply pressure."),
             [_cons_related(ctx, eq.get("box"), tag, f"Overpressure of {tag} and possible loss of containment of {ctx.release}")],
             "S", psv + trip_safeguards(ctx, "P", "H", eq), sev_loc, 2,
             [] if psv_items else [ctx.recs.add(f"Confirm overpressure protection of {tag} for the maximum upstream source pressure.")]))
@@ -1239,7 +1238,7 @@ def equipment_node(ctx, eq, nid):
     devs.append(dev("High Pressure", hp_rows))
 
     devs.append(dev("Low Pressure", [
-        row(_cause_ltr(ctx, eq.get("box"), tag, "Pressure on the line to the left falls."),
+        row(_cause_ltr(ctx, eq.get("box"), tag, "Low supply pressure."),
             [_cons_related(ctx, eq.get("box"), tag, f"Low pressure supply downstream of {tag}")], "A",
             trip_safeguards(ctx, "P", "L", eq), 2, 3),
     ]))
@@ -1440,12 +1439,12 @@ def control_valve_node(ctx, cvs, nid, heater):
         devs.append(dev("More Flow / High Pressure", more_rows))
 
     devs.append(dev("Reverse Flow", [row(
-        _cause_ltr(ctx, cv.get("box"), tag, "Upstream pressure is lost while the line to the right stays pressurized."),
+        _cause_ltr(ctx, cv.get("box"), tag, "Loss of upstream pressure while downstream stays pressurized."),
         [_cons_related(ctx, cv.get("box"), tag, f"Backflow through {tag} toward the upstream side")], "A",
         check_safeguards(ctx, drum), 3, 2,
         [] if check_safeguards(ctx, drum) else [ctx.recs.add(f"Provide a check valve so {tag} cannot pass reverse flow.")])]))
     devs.append(dev("Low Pressure", [row(
-        _cause_ltr(ctx, cv.get("box"), tag, f"{tag} closes or the line to the left loses supply."),
+        _cause_ltr(ctx, cv.get("box"), tag, f"{tag} closes or upstream supply is lost."),
         [_cons_related(ctx, cv.get("box"), tag, f"Pressure falls at {down_name}")], "A",
         trip_safeguards(ctx, "P", "L", drum), 2, 3)]))
 
