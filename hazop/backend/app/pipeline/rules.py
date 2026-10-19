@@ -314,14 +314,50 @@ def _overall_intent(ctx):
     return "To " + clauses[0] + "".join(f", and {clause}" for clause in clauses[1:]) + "."
 
 
+def _line_phrase(ctx, line):
+    """The P&ID line, with the PFD stream that was matched to it."""
+    tag = line.get("tag") or "the line"
+    stream = ""
+    for match in getattr(ctx, "line_relation", None) or []:
+        if match.get("pid_line") == tag and re.fullmatch(r"\d{1,3}[A-Z]{0,2}", str(match.get("pfd_stream") or "")):
+            stream = match["pfd_stream"]
+            break
+    if stream:
+        return f"P&ID line {tag} (PFD stream {stream})"
+    return f"P&ID line {tag}"
+
+
+def _lines_on_route(ctx, source, target):
+    """Process lines from this inlet toward the main equipment, in left-to-right order."""
+    box = source.get("box") or [0, 0, 0, 0]
+    sy = (box[1] + box[3]) / 2
+    sx = _cx(source)
+    end_x = _cx(target) if target else 1
+    found = []
+    seen = set()
+    for line in ctx.process_lines:
+        tag = line.get("tag")
+        if not tag or tag in seen:
+            continue
+        boxes = line.get("boxes") or ([line["box"]] if line.get("box") else [])
+        for candidate in boxes:
+            lx = (candidate[0] + candidate[2]) / 2
+            ly = (candidate[1] + candidate[3]) / 2
+            if sx - 0.08 <= lx <= end_x + 0.1 and abs(ly - sy) <= 0.18:
+                seen.add(tag)
+                found.append(line)
+                break
+    return sorted(found, key=_cx)
+
+
 def _node_description(ctx, color=None):
-    """A short route summary: where the line comes from, what it passes, and where it goes."""
+    """A short route summary, read left to right, naming the P&ID line and its PFD stream."""
     fluid = ctx.fluid
     large = _large_equipment(ctx)
     vessels = [e for e in large if e.get("kind") == "vessel"]
     target = vessels[0] if vessels else (large[-1] if large else None)
-    sources = _reading_order(ctx.sources)
-    valves = _reading_order(ctx.find(cats=("control_valve",)))
+    sources = sorted(ctx.sources, key=lambda item: (_cx(item), ((item.get("box") or [0, 0, 0, 0])[1])))
+    valves = ctx.find(cats=("control_valve",))
     sentences = []
     if not sources and large:
         sources = [{"description": _eq_phrase(large[0]), "box": large[0].get("box"), "_skip": large[0]["tag"]}]
@@ -339,27 +375,31 @@ def _node_description(ctx, color=None):
         return nearest is source
 
     for index, source in enumerate(sources[:4]):
-        through = [_eq_phrase(eq) for eq in large if _on_this_inlet(eq, source)]
-        on_path = [v for v in valves if _on_this_inlet(v, source)]
+        through = [_eq_phrase(eq) for eq in sorted(large, key=_cx) if _on_this_inlet(eq, source)]
+        on_path = sorted([v for v in valves if _on_this_inlet(v, source)], key=_cx)
         if on_path:
             through.append(_join_tags([v.get("tag") for v in on_path]))
-        lead = f"{fluid.capitalize()} line" if index == 0 else f"Another {fluid} line"
+        route_lines = _lines_on_route(ctx, source, target)
+        where = f" on {_and([_line_phrase(ctx, line) for line in route_lines[:2]])}" if route_lines else ""
+        lead = f"Reading left to right, the {fluid} line" if index == 0 else f"Another {fluid} line"
         origin = _conn_name(source)
         if through and target:
-            sentences.append(f"{lead} from {origin} going through {', '.join(through)} to {target['tag']}.")
+            sentences.append(f"{lead}{where} from {origin} going through {', '.join(through)} to {target['tag']}.")
         elif target:
-            sentences.append(f"{lead} from {origin} going to {target['tag']}.")
+            sentences.append(f"{lead}{where} from {origin} going to {target['tag']}.")
         elif through:
-            sentences.append(f"{lead} from {origin} going through {', '.join(through)}.")
+            sentences.append(f"{lead}{where} from {origin} going through {', '.join(through)}.")
         else:
-            sentences.append(f"{lead} from {origin}.")
+            sentences.append(f"{lead}{where} from {origin}.")
     if vessels:
+        outlet = [line for line in _lines_on_route(ctx, vessels[0], None) if _cx(line) > _cx(vessels[0])]
+        outlet_text = f" through {_line_phrase(ctx, outlet[0])}" if outlet else " through the outlet liquid line"
         liquid = [c for c in ctx.dests if any(word in _conn_name(c) for word in ("separat", "liquid", "oil", "condensate", "water"))]
         chosen = liquid or list(ctx.dests)
         if chosen:
             places = _and([_place_name(_conn_name(c)) for c in chosen[:3]])
             sentences.append(
-                f"{vessels[0]['tag']} separates the liquid from vapor and liquid flows through the outlet liquid line going to {places}."
+                f"{vessels[0]['tag']} separates the liquid from vapor and liquid flows{outlet_text} going to {places}."
             )
         else:
             sentences.append(f"{vessels[0]['tag']} separates the liquid from vapor.")
