@@ -36,10 +36,10 @@ export default function R2Charts({
   return (
     <section className="panel model-hist">
       <div className="panel-head">
-        <h3>Test R² per model</h3>
+        <h3>R² per model</h3>
         <p>
-          Each bar is that model&apos;s test-set R². The scale runs from 0 to 1, and 1 is a perfect fit. The number
-          above the bar is the actual R². A negative R² means the model fits worse than the average of the data.
+          Each bar is that model&apos;s R². The scale runs from 0 to 1, and 1 is a perfect fit. The number above the
+          bar is the actual R². A negative R² means the model fits worse than the average of the data.
         </p>
       </div>
 

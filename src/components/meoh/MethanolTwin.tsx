@@ -78,9 +78,6 @@ function signed(n: number, digits = 2) {
   return `${n >= 0 ? "+" : ""}${fmt(n, digits)}`;
 }
 
-const h2Produced = (r: TwinOutput | null, inputs: TwinInputs | null) =>
-  r?.outputs && inputs ? 2 * inputs.F_in_kgmole_h * 1000 * (r.outputs.X_pct / 100) : null;
-
 export default function MethanolTwin({ className = "" }: { className?: string }) {
   const [model, setModel] = useState<ModelKind>("parallel");
   const [inputs, setInputs] = useState<TwinInputs>(DEFAULT_INPUTS);
@@ -139,7 +136,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
   const rx = info?.reactor;
   const bedArea = rx ? (Math.PI * rx.D_m * rx.D_m) / 4 : null;
   const bedVolume = bedArea != null && rx ? bedArea * rx.L_m : null;
-  const specificSurface = rx ? (6 * (1 - rx.epsilon)) / rx.dp_m : null;
 
   const update = (key: keyof TwinInputs, raw: string) => {
     setInputs((prev) => ({ ...prev, [key]: Number(raw) }));
@@ -306,9 +302,9 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                 <em>%</em>
               </article>
               <article className="metric">
-                <span>H₂ produced</span>
-                <strong>{fmt(h2Produced(result, ranInputs), 1)}</strong>
-                <em>mol/h</em>
+                <span>Heat media temp</span>
+                <strong>{fmt(T_heat, 0)}</strong>
+                <em>°C</em>
               </article>
               <article className="metric">
                 <span>Duty</span>
@@ -343,20 +339,12 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                 </p>
                 <dl>
                   <div>
-                    <dt>Bed</dt>
-                    <dd>Packed bed</dd>
-                  </div>
-                  <div>
                     <dt>Tube diameter</dt>
                     <dd>{fmt(rx.D_m, 2)} <small>m</small></dd>
                   </div>
                   <div>
                     <dt>Bed length</dt>
                     <dd>{fmt(rx.L_m, 1)} <small>m</small></dd>
-                  </div>
-                  <div>
-                    <dt>Particle diameter</dt>
-                    <dd>{fmt(rx.dp_m * 1000, 1)} <small>mm</small></dd>
                   </div>
                   <div>
                     <dt>Bed voidage</dt>
@@ -370,14 +358,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                     <dt>Bed volume</dt>
                     <dd>{fmt(bedVolume, 4)} <small>m³</small></dd>
                   </div>
-                  <div>
-                    <dt>Specific surface</dt>
-                    <dd>{fmt(specificSurface, 0)} <small>1/m</small></dd>
-                  </div>
-                  <div>
-                    <dt>Jacket-side HTC</dt>
-                    <dd>{fmt(rx.h_heat_W_m2K, 0)} <small>W/m²·K</small></dd>
-                  </div>
                 </dl>
               </div>
             )}
@@ -390,12 +370,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               </ul>
             )}
 
-            <footer className="result-foot">
-              <span>CH₃OH → CO + 2H₂</span>
-              <span>
-                D {fmt(info?.reactor.D_m ?? 0.1, 2)} m · L {fmt(info?.reactor.L_m ?? 1, 1)} m
-              </span>
-            </footer>
           </section>
         </div>
 
