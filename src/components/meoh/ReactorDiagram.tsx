@@ -25,7 +25,6 @@ function tempColor(t: number | undefined) {
 
 type Props = {
   T_in?: number;
-  P_in?: number;
   profile?: (number | undefined)[];
   T_heat: number;
   animate: boolean;
@@ -56,11 +55,7 @@ function temp(t: number | undefined) {
   return t != null && Number.isFinite(t) ? `${t.toFixed(1)}°C` : "—";
 }
 
-function bar(p: number | undefined) {
-  return p != null && Number.isFinite(p) ? `${p.toFixed(3)} bar_g` : "—";
-}
-
-export default function ReactorDiagram({ T_in, P_in, profile = [], T_heat, animate }: Props) {
+export default function ReactorDiagram({ T_in, profile = [], T_heat, animate }: Props) {
   const T_out = profile[profile.length - 1];
   const stops = [T_in, ...SENSOR_Z.map((_, i) => profile[i])];
   const cHeat = tempColor(T_heat);
@@ -132,12 +127,6 @@ export default function ReactorDiagram({ T_in, P_in, profile = [], T_heat, anima
           </g>
         ))}
 
-        <text x="8" y="30" textAnchor="start" fill={tempColor(T_in)} className="hx-label">
-          CH₃OH in {temp(T_in)}
-        </text>
-        <text x="8" y="46" textAnchor="start" className="rx-sub">
-          {bar(P_in)}
-        </text>
       </svg>
       <figcaption>
         <span>Packed-bed tubular reactor · temperature probes along the bed</span>

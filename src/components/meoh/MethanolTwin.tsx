@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Logo from "../Logo";
 import ModelHistograms, { type HistogramVariable } from "../hx/ModelHistograms";
+import R2Charts from "./R2Charts";
 import ReactorDiagram from "./ReactorDiagram";
 import {
   BACKEND_OFFLINE,
@@ -152,9 +153,7 @@ export default function MethanolTwin({ className = "" }: { className?: string })
       <div className="grid-glow" aria-hidden />
 
       <header className="topbar">
-        <span className="pill muted">
-          Packed bed · D {info?.reactor.D_m ?? 0.1} m · L {info?.reactor.L_m ?? 1} m
-        </span>
+        <span />
         <Logo className="topbar-logo" inverse />
         <div className="top-meta">
           <span className={`pill status ${status}`}>
@@ -280,12 +279,10 @@ export default function MethanolTwin({ className = "" }: { className?: string })
             <div className="panel-head">
               <h3>{result?.modelLabel ?? "Outputs"}</h3>
               <p>{result?.approach ?? "Run the twin to see model outputs."}</p>
-              {result && <span className="source-tag">Source: {result.source}</span>}
             </div>
 
             <ReactorDiagram
               T_in={ranInputs?.T_in_C}
-              P_in={ranInputs?.P_in_bar_g}
               profile={PROFILE_KEYS.map((k) => out?.[k])}
               T_heat={T_heat}
               animate={out != null}
@@ -345,6 +342,10 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                   <em> · constant for every operating point</em>
                 </p>
                 <dl>
+                  <div>
+                    <dt>Bed</dt>
+                    <dd>Packed bed</dd>
+                  </div>
                   <div>
                     <dt>Tube diameter</dt>
                     <dd>{fmt(rx.D_m, 2)} <small>m</small></dd>
@@ -449,6 +450,8 @@ export default function MethanolTwin({ className = "" }: { className?: string })
             onSelect={setModel}
           />
         )}
+
+        {results && info && <R2Charts info={info} selected={model} onSelect={setModel} />}
       </div>
     </div>
   );
