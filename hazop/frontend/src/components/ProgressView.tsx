@@ -180,7 +180,7 @@ export default function ProgressView({ job, onCancel }: { job: Job; onCancel: ()
                       {s.label}
                     </div>
                     {active && s.id === "ocr" && (
-                      <div className="mt-0.5 text-xs text-slate-500">This is the longest step on scanned drawings.</div>
+                      <div className="mt-0.5 text-xs text-slate-500">Every tag on the P&ID is read from left to right. This is the longest step on a scanned drawing.</div>
                     )}
                   </div>
                 </li>

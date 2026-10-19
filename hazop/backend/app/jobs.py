@@ -24,12 +24,12 @@ from .pipeline import ai, ocr, parse, pfd, render, rules
 
 STAGES = [
     {"id": "upload", "label": "Upload received"},
-    {"id": "verify", "label": "Checking uploaded drawings"},
-    {"id": "render", "label": "Reading drawing"},
-    {"id": "ocr", "label": "Recognising text & tags"},
-    {"id": "parse", "label": "Identifying equipment, lines & instruments"},
+    {"id": "verify", "label": "Reading the piping specification and the risk matrix"},
+    {"id": "render", "label": "Reading the PFD: equipment names and the process flow"},
+    {"id": "ocr", "label": "Reading the P&ID from left to right"},
+    {"id": "parse", "label": "Matching each PFD stream to its P&ID line"},
     {"id": "nodes", "label": "Confirming HAZOP nodes"},
-    {"id": "analyse", "label": "Evaluating risk scenarios for each deviation"},
+    {"id": "analyse", "label": "Writing causes left to right and consequences from the matched lines"},
     {"id": "done", "label": "Worksheet ready"},
 ]
 
@@ -357,6 +357,7 @@ def _learn_pfd(job_id, info):
     try:
         total = drawing.page_count
         cap = min(total, 30)
+        _stage(job_id, "render")
         _update(job_id, detail=f"Reading PFD '{info['name']}' from its start point ({cap} of {total} page{'s' if total != 1 else ''})")
         for i in range(cap):
             _update(job_id, detail=f"Reading every line of PFD page {i + 1} of {cap} · {info['name']}")
@@ -461,6 +462,7 @@ def _extract(job_id):
             shown = ", ".join(item["code"] for item in learned[:6])
             extra = f" +{len(learned) - 6}" if len(learned) > 6 else ""
             origin = "Uploaded piping specification" if kb.has_project_specs() else "Piping specification"
+            _stage(job_id, "verify")
             _update(job_id, status="running",
                     detail=f"{origin} learned before the PFD and the P&ID: {len(learned)} classes ({shown}{extra})")
             pfd_learned = _learn_pfd(job_id, job["_pfd"]) if job.get("_pfd") else None
@@ -477,7 +479,6 @@ def _extract(job_id):
             _update(job_id, detail=purpose[:180])
             _update(job_id, detail="Purpose understood. Reading the P&ID.")
             _update(job_id, detail="Counting pages in each P&ID")
-            _stage(job_id, "verify")
             t0 = time.time()
             inventory = []
             checks = []
@@ -502,7 +503,7 @@ def _extract(job_id):
             _publish_checks(job_id, checks, 0)
             files = len(checks)
             _update(job_id, detail=f"Found {total} drawing{'s' if total != 1 else ''} in {files} file{'s' if files != 1 else ''}")
-            _stage(job_id, "render")
+            _stage(job_id, "ocr")
             count = min(total, MAX_PID_PAGES)
             multi = count > 1
             many_files = len(inventory) > 1
@@ -624,6 +625,7 @@ def _extract(job_id):
                 linked = pfd.relate(pfd_learned["study"], sheets)
                 pfd_learned["study"]["line_relation"] = linked["matches"]
                 pfd_learned["relation_note"] = linked["note"]
+                _stage(job_id, "parse")
                 _update(job_id, detail="P&ID read. PFD streams are matched to the P&ID lines that join the same equipment.")
             else:
                 _update(job_id, detail="P&ID read. Nodes will be studied one at a time, in node-number order.")
