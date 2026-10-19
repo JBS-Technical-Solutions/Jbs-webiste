@@ -134,8 +134,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
   const T_heat = info?.reactor.T_heat_C ?? T_HEAT_DEFAULT;
   const dP = out && ranInputs ? ranInputs.P_in_bar_g - out.P_out_bar_g : null;
   const rx = info?.reactor;
-  const bedArea = rx ? (Math.PI * rx.D_m * rx.D_m) / 4 : null;
-  const bedVolume = bedArea != null && rx ? bedArea * rx.L_m : null;
 
   const update = (key: keyof TwinInputs, raw: string) => {
     setInputs((prev) => ({ ...prev, [key]: Number(raw) }));
@@ -350,14 +348,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                   <div>
                     <dt>Bed voidage</dt>
                     <dd>{fmt(rx.epsilon, 2)}</dd>
-                  </div>
-                  <div>
-                    <dt>Cross section</dt>
-                    <dd>{fmt(bedArea, 4)} <small>m²</small></dd>
-                  </div>
-                  <div>
-                    <dt>Bed volume</dt>
-                    <dd>{fmt(bedVolume, 4)} <small>m³</small></dd>
                   </div>
                 </dl>
               </div>
