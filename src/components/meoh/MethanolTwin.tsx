@@ -141,8 +141,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
     setInputs((prev) => ({ ...prev, [key]: Number(raw) }));
   };
 
-  const limit = (max: number, digits = 0) => `0 – ${fmt(max, digits)}`;
-
   return (
     <div className={`hx-app meoh-app ${className}`}>
       <div className="atmosphere" aria-hidden />
@@ -170,7 +168,7 @@ export default function MethanolTwin({ className = "" }: { className?: string })
           <p className="lede">
             Methanol decomposition, CH₃OH → CO + 2H₂, in a jacket-heated packed-bed tube. Four engines — LHHW
             physics, serial and parallel hybrids, and a physics-informed neural network — predict the axial
-            temperature profile, conversion, pressure drop and heat duty live from the Python backend.
+            temperature profile, conversion, pressure drop and heat duty live from the Python models.
           </p>
         </section>
 
@@ -225,7 +223,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                 />
                 <em>°C</em>
               </div>
-              <small className="field-hint">{limit(1000)}</small>
             </label>
 
             <label className="field">
@@ -241,7 +238,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                 />
                 <em>bar_g</em>
               </div>
-              <small className="field-hint">{limit(50, 0)}</small>
             </label>
 
             <label className="field">
@@ -257,7 +253,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                 />
                 <em>kgmole/h</em>
               </div>
-              <small className="field-hint">{limit(50)}</small>
             </label>
 
             {error && status !== "offline" && (
@@ -279,6 +274,12 @@ export default function MethanolTwin({ className = "" }: { className?: string })
 
             <ReactorDiagram
               T_in={ranInputs?.T_in_C}
+              P_in={ranInputs?.P_in_bar_g}
+              F_in={ranInputs?.F_in_kgmole_h}
+              T_out={out?.T_10}
+              P_out={out?.P_out_bar_g}
+              X_pct={out?.X_pct}
+              Q_kW={out?.Q_kW}
               profile={PROFILE_KEYS.map((k) => out?.[k])}
               T_heat={T_heat}
               animate={out != null}
@@ -422,6 +423,7 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               pinn: MODELS.pinn.title,
             }}
             onSelect={setModel}
+            hideAxis
           />
         )}
 

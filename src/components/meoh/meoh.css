@@ -1,4 +1,78 @@
 /* Methanol reactor simulator styles; builds on hx.css, scoped to .meoh-app. */
+.meoh-app .rx-stage {
+  display: grid;
+  grid-template-columns: 8.75rem minmax(0, 1fr) 8.75rem;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.meoh-app .rx-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.meoh-app .rx-kicker {
+  margin: 0;
+  color: var(--ink-dim);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.meoh-app .rx-stream.in {
+  align-items: stretch;
+  text-align: right;
+}
+
+.meoh-app .rx-stream.out {
+  align-items: stretch;
+  text-align: left;
+}
+
+.meoh-app .rx-chip {
+  padding: 0.38rem 0.55rem 0.42rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(8, 12, 18, 0.72);
+}
+
+.meoh-app .rx-stream.in .rx-chip {
+  border-right: 2px solid #3ecfcf;
+}
+
+.meoh-app .rx-stream.out .rx-chip {
+  border-left: 2px solid #ff8a3d;
+}
+
+.meoh-app .rx-chip span {
+  display: block;
+  color: var(--ink-dim);
+  font-size: 0.58rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.meoh-app .rx-chip strong {
+  display: block;
+  margin-top: 0.06rem;
+  color: var(--ink);
+  font-family: var(--hx-mono), monospace;
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.meoh-app .rx-chip em {
+  margin-left: 0.22rem;
+  color: var(--ink-dim);
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 500;
+}
+
 .meoh-app .rx-coil {
   fill: none;
   stroke-width: 2.5;
@@ -167,4 +241,34 @@
   border-color: var(--lc);
   color: var(--ink);
   background: color-mix(in srgb, var(--lc) 12%, transparent);
+}
+
+@media (max-width: 760px) {
+  .meoh-app .rx-stage {
+    grid-template-columns: 1fr;
+  }
+
+  .meoh-app .rx-stream {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .meoh-app .rx-kicker {
+    flex-basis: 100%;
+  }
+
+  .meoh-app .rx-chip {
+    flex: 1 1 7.2rem;
+  }
+
+  .meoh-app .rx-stream.in .rx-chip,
+  .meoh-app .rx-stream.out .rx-chip {
+    text-align: left;
+    border-right: 1px solid var(--line);
+    border-left: 2px solid #3ecfcf;
+  }
+
+  .meoh-app .rx-stream.out .rx-chip {
+    border-left-color: #ff8a3d;
+  }
 }

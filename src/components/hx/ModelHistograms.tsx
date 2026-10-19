@@ -34,12 +34,14 @@ export default function ModelHistograms<K extends string, R extends { model: K }
   selected,
   titles,
   onSelect,
+  hideAxis = false,
 }: {
   results: R[];
   variables: HistogramVariable<R>[];
   selected: K;
   titles: Record<K, string>;
   onSelect: (m: K) => void;
+  hideAxis?: boolean;
 }) {
   const ranges = Object.fromEntries(variables.map((v) => [v.key, v.range ?? fallbackRange(v, results)])) as Record<
     string,
@@ -47,7 +49,7 @@ export default function ModelHistograms<K extends string, R extends { model: K }
   >;
 
   return (
-    <section className="panel model-hist">
+    <section className={`panel model-hist${hideAxis ? " no-axis" : ""}`}>
       <div className="panel-head">
         <h3>Outputs per model</h3>
         <p>
@@ -69,11 +71,13 @@ export default function ModelHistograms<K extends string, R extends { model: K }
             </header>
 
             <div className="mh-plot">
-              <div className="mh-axis" aria-hidden>
-                <span>100%</span>
-                <span>50%</span>
-                <span>0%</span>
-              </div>
+              {!hideAxis && (
+                <div className="mh-axis" aria-hidden>
+                  <span>100%</span>
+                  <span>50%</span>
+                  <span>0%</span>
+                </div>
+              )}
               <div className="mh-bars">
                 {variables.map((v) => {
                   const value = v.value(r);

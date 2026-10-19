@@ -782,6 +782,14 @@
   color: var(--heat-2);
 }
 
+.hx-app .model-hist.no-axis .mh-plot {
+  grid-template-columns: 1fr;
+}
+
+.hx-app .model-hist.no-axis .mh-labels {
+  margin-left: 0;
+}
+
 .hx-app .panel.model-hist {
   margin-top: 1.1rem;
   animation-delay: 0.12s;

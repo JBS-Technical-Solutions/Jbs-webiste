@@ -25,6 +25,12 @@ function tempColor(t: number | undefined) {
 
 type Props = {
   T_in?: number;
+  P_in?: number;
+  F_in?: number;
+  T_out?: number;
+  P_out?: number;
+  X_pct?: number;
+  Q_kW?: number;
   profile?: (number | undefined)[];
   T_heat: number;
   animate: boolean;
@@ -55,13 +61,57 @@ function temp(t: number | undefined) {
   return t != null && Number.isFinite(t) ? `${t.toFixed(1)}°C` : "—";
 }
 
-export default function ReactorDiagram({ T_in, profile = [], T_heat, animate }: Props) {
-  const T_out = profile[profile.length - 1];
+function num(n: number | undefined, digits: number) {
+  return n != null && Number.isFinite(n) ? n.toFixed(digits) : "—";
+}
+
+function Chip({
+  label,
+  value,
+  unit,
+  color,
+}: {
+  label: string;
+  value: string;
+  unit: string;
+  color?: string;
+}) {
+  return (
+    <div className="rx-chip">
+      <span>{label}</span>
+      <strong style={color ? { color } : undefined}>
+        {value}
+        <em>{unit}</em>
+      </strong>
+    </div>
+  );
+}
+
+export default function ReactorDiagram({
+  T_in,
+  P_in,
+  F_in,
+  T_out,
+  P_out,
+  X_pct,
+  Q_kW,
+  profile = [],
+  T_heat,
+  animate,
+}: Props) {
+  const outletT = T_out ?? profile[profile.length - 1];
   const stops = [T_in, ...SENSOR_Z.map((_, i) => profile[i])];
   const cHeat = tempColor(T_heat);
 
   return (
     <figure className={`hx-diagram rx-diagram ${animate ? "is-live" : ""}`}>
+      <div className="rx-stage">
+        <aside className="rx-stream in" aria-label="Inlet conditions">
+          <p className="rx-kicker">Inlet</p>
+          <Chip label="Temperature" value={num(T_in, 1)} unit="°C" color={tempColor(T_in)} />
+          <Chip label="Pressure" value={num(P_in, 3)} unit="bar_g" />
+          <Chip label="Methanol flow" value={num(F_in, 2)} unit="kgmole/h" />
+        </aside>
       <svg viewBox="0 0 720 230" role="img" aria-label="Heated packed-bed tubular reactor for methanol decomposition">
         <defs>
           <linearGradient id="rx-bed" gradientUnits="userSpaceOnUse" x1={TUBE.x0} x2={TUBE.x1} y1="0" y2="0">
@@ -89,7 +139,7 @@ export default function ReactorDiagram({ T_in, profile = [], T_heat, animate }: 
         <path d={coil((JACKET.y1 + TUBE.y1) / 2)} className="rx-coil" stroke={cHeat} />
 
         <path d={`M28 ${MID}H${TUBE.x0}`} className="hx-nozzle" stroke={tempColor(T_in)} />
-        <path d={`M${TUBE.x1} ${MID}H692`} className="hx-nozzle" stroke={tempColor(T_out)} />
+        <path d={`M${TUBE.x1} ${MID}H692`} className="hx-nozzle" stroke={tempColor(outletT)} />
 
         <rect
           x={TUBE.x0}
@@ -128,6 +178,14 @@ export default function ReactorDiagram({ T_in, profile = [], T_heat, animate }: 
         ))}
 
       </svg>
+        <aside className="rx-stream out" aria-label="Outlet conditions">
+          <p className="rx-kicker">Outlet</p>
+          <Chip label="Temperature" value={num(outletT, 1)} unit="°C" color={tempColor(outletT)} />
+          <Chip label="Conversion" value={num(X_pct, 2)} unit="%" />
+          <Chip label="Pressure" value={num(P_out, 3)} unit="bar_g" />
+          <Chip label="Heat duty" value={num(Q_kW, 2)} unit="kW" />
+        </aside>
+      </div>
       <figcaption>
         <span>Packed-bed tubular reactor · temperature probes along the bed</span>
         <span className="hx-scale" aria-hidden>
