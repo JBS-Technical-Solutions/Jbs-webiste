@@ -319,8 +319,8 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               </article>
               <article className="metric">
                 <span>Pressure drop</span>
-                <strong>{fmt(dP != null ? dP * 1000 : null, 1)}</strong>
-                <em>mbar</em>
+                <strong>{fmt(dP, 3)}</strong>
+                <em>bar</em>
               </article>
             </div>
 
