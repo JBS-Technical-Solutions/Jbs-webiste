@@ -218,6 +218,22 @@ def _as_list(v):
     return [str(x) for x in v if str(x).strip()]
 
 
+def _unique_pairs(safeguards, tags):
+    """Drop a repeated device. The tag list stays lined up with the lines that remain."""
+    from .rules import _safeguard_key
+    seen = set()
+    kept, kept_tags = [], []
+    for index, text in enumerate(safeguards):
+        key = _safeguard_key(text)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        kept.append(text)
+        if index < len(tags):
+            kept_tags.append(tags[index])
+    return kept, kept_tags
+
+
 def normalise(data, draft, ext=None):
     """Keep the draft node summary. Accept only causes and safeguards whose tags are on the drawing."""
     recs = {str(k): str(v) for k, v in (data.get("recommendations") or {}).items()}
@@ -236,6 +252,7 @@ def normalise(data, draft, ext=None):
                     continue
                 safeguards = [s for s in _as_list(r.get("safeguards")) if not _invented(s, allowed)]
                 tags = [t for t in _as_list(r.get("tags")) if not _invented(t, allowed)]
+                safeguards, tags = _unique_pairs(safeguards, tags)
                 if not safeguards or safeguards == ["None identified on this P&ID"]:
                     borrowed = _draft_safeguards(draft_node, cause)
                     if borrowed:

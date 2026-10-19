@@ -422,6 +422,33 @@ def _listed(items, key, limit=12):
     return shown + more
 
 
+_TAG_KEY = re.compile(r"\b([A-Z]{1,8}-[A-Z0-9][A-Z0-9./-]*)\b", re.I)
+
+
+def _safeguard_key(text):
+    """One device is one line, even when the drawing repeats the same tag."""
+    found = _TAG_KEY.findall(str(text or ""))
+    if found:
+        return found[0].upper().replace(" ", "")
+    return re.sub(r"\s+", " ", str(text or "")).strip().lower()
+
+
+def _unique_sg(items):
+    seen = set()
+    out = []
+    for item in items or []:
+        if isinstance(item, dict):
+            tag = re.sub(r"\s+", "", str(item.get("tag") or "")).upper()
+            key = tag if tag and tag != "-" else _safeguard_key(item.get("text"))
+        else:
+            key = _safeguard_key(item)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
 def sg(text, tag, strong=False):
     return {"text": text, "tag": tag, "strong": strong}
 
@@ -574,13 +601,27 @@ def relief_safeguards(ctx, eq=None):
 
 
 def check_safeguards(ctx, eq=None):
-    found = [i for i in ctx.instruments
-             if (str(i.get("letters") or "").startswith("FSV") or i.get("category") == "safety")
-             and _same_equipment(ctx, i, eq)]
+    found, seen = [], set()
+    for inst in ctx.instruments:
+        if not (str(inst.get("letters") or "").startswith("FSV") or inst.get("category") == "safety"):
+            continue
+        if not _same_equipment(ctx, inst, eq):
+            continue
+        tag = str(inst.get("tag") or "").upper()
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        found.append(inst)
     out = [sg(f"{i['tag']} check valve", i["tag"], strong=True) for i in found]
     if not out:
-        for v in ctx.valves_of("check")[:4]:
-            out.append(sg(f"Check valve {v.get('code')}", v["code"], strong=True))
+        for valve in ctx.valves_of("check"):
+            code = str(valve.get("code") or "").upper()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            out.append(sg(f"Check valve {valve.get('code')}", valve["code"], strong=True))
+            if len(out) >= 4:
+                break
     return out
 
 
@@ -656,9 +697,9 @@ def _fill_recommendations(node, ctx):
 
 def row(cause, consequences, cc, safeguards, c, base_l, recs=()):
     """C and L are this scenario's intents, placed on the levels of the uploaded risk-matrix file."""
+    safeguards = _unique_sg(safeguards)[:5]
     strong = any(s["strong"] for s in safeguards)
     c, l = risk.from_basis(c, max(1, base_l - (1 if strong else 0)))
-    safeguards = safeguards[:5]
     return {
         "cause": cause,
         "consequences": consequences,
