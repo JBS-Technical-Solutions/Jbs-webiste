@@ -289,39 +289,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               </div>
             )}
 
-            <div className="metrics">
-              <article className="metric hero-metric">
-                <span>Outlet temperature</span>
-                <strong>{fmt(out?.T_10)}</strong>
-                <em>°C</em>
-              </article>
-              <article className="metric">
-                <span>Conversion</span>
-                <strong>{fmt(out?.X_pct, 2)}</strong>
-                <em>%</em>
-              </article>
-              <article className="metric">
-                <span>Heat media temp</span>
-                <strong>{fmt(T_heat, 0)}</strong>
-                <em>°C</em>
-              </article>
-              <article className="metric">
-                <span>Duty</span>
-                <strong>{fmt(out?.Q_kW)}</strong>
-                <em>kW</em>
-              </article>
-              <article className="metric">
-                <span>Outlet pressure</span>
-                <strong>{fmt(out?.P_out_bar_g, 3)}</strong>
-                <em>bar_g</em>
-              </article>
-              <article className="metric">
-                <span>Pressure drop</span>
-                <strong>{fmt(dP, 3)}</strong>
-                <em>bar</em>
-              </article>
-            </div>
-
             {out && ref && (
               <p className="phys-ref">
                 vs calibrated physics{result?.eta != null ? ` (η ${result.eta.toExponential(3)})` : ""}: T out{" "}
@@ -330,28 +297,34 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               </p>
             )}
 
-            {rx && (
-              <div className="hydraulics">
-                <p className="hydraulics-head">
-                  Reactor geometry
-                  <em> · constant for every operating point</em>
-                </p>
-                <dl>
-                  <div>
-                    <dt>Tube diameter</dt>
-                    <dd>{fmt(rx.D_m, 2)} <small>m</small></dd>
-                  </div>
-                  <div>
-                    <dt>Bed length</dt>
-                    <dd>{fmt(rx.L_m, 1)} <small>m</small></dd>
-                  </div>
-                  <div>
-                    <dt>Bed voidage</dt>
-                    <dd>{fmt(rx.epsilon, 2)}</dd>
-                  </div>
-                </dl>
-              </div>
-            )}
+            <div className="hydraulics">
+              <p className="hydraulics-head">
+                Reactor geometry &amp; heat media
+                <em> · tube and bed are fixed · pressure drop from this run</em>
+              </p>
+              <dl>
+                <div>
+                  <dt>Tube diameter</dt>
+                  <dd>{fmt(rx?.D_m, 2)} <small>m</small></dd>
+                </div>
+                <div>
+                  <dt>Bed length</dt>
+                  <dd>{fmt(rx?.L_m, 1)} <small>m</small></dd>
+                </div>
+                <div>
+                  <dt>Bed voidage</dt>
+                  <dd>{fmt(rx?.epsilon, 2)}</dd>
+                </div>
+                <div>
+                  <dt>Heat media temp</dt>
+                  <dd>{fmt(T_heat, 0)} <small>°C</small></dd>
+                </div>
+                <div>
+                  <dt>Pressure drop</dt>
+                  <dd>{fmt(dP, 3)} <small>bar</small></dd>
+                </div>
+              </dl>
+            </div>
 
             {result && result.warnings.length > 0 && (
               <ul className="banner warn">
@@ -413,7 +386,7 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               pinn: MODELS.pinn.title,
             }}
             onSelect={setModel}
-            hideAxis
+            showFullScale
           />
         )}
 

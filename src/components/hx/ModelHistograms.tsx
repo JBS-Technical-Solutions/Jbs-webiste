@@ -35,6 +35,7 @@ export default function ModelHistograms<K extends string, R extends { model: K }
   titles,
   onSelect,
   hideAxis = false,
+  showFullScale = false,
 }: {
   results: R[];
   variables: HistogramVariable<R>[];
@@ -42,6 +43,7 @@ export default function ModelHistograms<K extends string, R extends { model: K }
   titles: Record<K, string>;
   onSelect: (m: K) => void;
   hideAxis?: boolean;
+  showFullScale?: boolean;
 }) {
   const ranges = Object.fromEntries(variables.map((v) => [v.key, v.range ?? fallbackRange(v, results)])) as Record<
     string,
@@ -56,6 +58,21 @@ export default function ModelHistograms<K extends string, R extends { model: K }
           Each bar shows where the value sits in its data range (0% = lowest, 100% = highest); the actual value is
           written above the bar. Click a card to select that model.
         </p>
+        {showFullScale && (
+          <ul className="mh-fullscale" aria-label="What 100% means for each variable">
+            {variables.map((v) => {
+              const { max } = ranges[v.key];
+              return (
+                <li key={v.key} style={{ "--vc": v.color } as CSSProperties}>
+                  <span>{v.label}</span>
+                  <strong>
+                    100% = {short(max)} {v.unit}
+                  </strong>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
 
       <div className="mh-grid" style={{ "--mh-cols": variables.length } as CSSProperties}>

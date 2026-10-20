@@ -9,6 +9,7 @@ const BARS: { key: OutputCol; label: string; color: string }[] = [
   { key: "T_1m_C", label: "T 1.0 m", color: "#ff4d3d" },
   { key: "X_overall_pct", label: "Conversion", color: "#4ade80" },
   { key: "P_out_bar_g", label: "Pressure", color: "#4da3ff" },
+  { key: "Q_total_kW", label: "Heat duty", color: "#a78bfa" },
 ];
 
 const TITLES: Record<ModelKind, string> = {

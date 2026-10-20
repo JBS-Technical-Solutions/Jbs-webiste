@@ -795,6 +795,37 @@
   animation-delay: 0.12s;
 }
 
+.hx-app .mh-fullscale {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 1.1rem;
+  margin: 0.85rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hx-app .mh-fullscale li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 6.5rem;
+}
+
+.hx-app .mh-fullscale span {
+  color: var(--vc);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.hx-app .mh-fullscale strong {
+  color: var(--ink);
+  font-family: var(--hx-mono), monospace;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
 .hx-app .mh-card.physics {
   --mc: #6f9fd4;
 }
