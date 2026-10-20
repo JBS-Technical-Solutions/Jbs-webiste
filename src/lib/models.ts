@@ -36,14 +36,14 @@ export const models: EquipmentModel[] = [
     category: "Reaction engineering",
     summary: "Methanol decomposition to hydrogen: conversion, bed temperatures and heat demand.",
     description:
-      "The methanol reformer twin models the decomposition of methanol into hydrogen and carbon monoxide (CH₃OH → CO + 2H₂) in a jacket-heated packed-bed reactor. Reaction kinetics, heat transfer and bed pressure drop are solved along the reactor and calibrated against operating data with machine learning, so operators see the axial temperature profile, conversion and heat demand for any feed temperature, pressure and flow.",
+      "Two methanol digital twins share this card. The reactor twin uses a fixed heating-media temperature with feed T, P and flow. The heating-media twin adds jacket temperature as a live plant input. Both solve CH₃OH → CO + 2H₂ along a packed bed with physics, hybrid and PINN engines for axial temperature, conversion, pressure drop and heat duty.",
     tracks: [
       "Axial bed temperature profile",
       "Methanol conversion",
-      "Hydrogen production rate",
       "Outlet pressure & bed pressure drop",
       "Heat duty from the heating jacket",
       "Feed temperature, pressure & flow",
+      "Heating-media temperature (heating-media twin)",
     ],
     outcomes: [
       "Find the feed conditions that maximise hydrogen output",
