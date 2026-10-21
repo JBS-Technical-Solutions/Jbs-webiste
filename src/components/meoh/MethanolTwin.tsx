@@ -299,29 +299,31 @@ export default function MethanolTwin({ className = "" }: { className?: string })
 
             <div className="metrics">
               <article className="metric hero-metric">
-                <span>Outlet temperature</span>
-                <strong>{fmt(out?.T_10)}</strong>
+                <span>Bed temp @ 0.2 m</span>
+                <strong>{fmt(out?.T_02)}</strong>
                 <em>°C</em>
               </article>
               <article className="metric">
-                <span>Conversion</span>
-                <strong>{fmt(out?.X_pct, 2)}</strong>
-                <em>%</em>
-              </article>
-              <article className="metric">
-                <span>Heat media temp</span>
-                <strong>{fmt(T_heat, 0)}</strong>
+                <span>Bed temp @ 0.4 m</span>
+                <strong>{fmt(out?.T_04)}</strong>
                 <em>°C</em>
               </article>
               <article className="metric">
-                <span>Duty</span>
-                <strong>{duty(out?.Q_kW)}</strong>
-                <em>kW</em>
+                <span>Bed temp @ 0.6 m</span>
+                <strong>{fmt(out?.T_06)}</strong>
+                <em>°C</em>
               </article>
               <article className="metric">
-                <span>Outlet pressure</span>
-                <strong>{fmt(out?.P_out_bar_g, 3)}</strong>
-                <em>bar_g</em>
+                <span>Bed temp @ 0.8 m</span>
+                <strong>{fmt(out?.T_08)}</strong>
+                <em>°C</em>
+              </article>
+              <article className="metric">
+                <span>Bed ΔT</span>
+                <strong>
+                  {out && ranInputs ? fmt(out.T_10 - ranInputs.T_in_C) : "—"}
+                </strong>
+                <em>°C</em>
               </article>
               <article className="metric">
                 <span>Pressure drop</span>
@@ -348,6 +350,10 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                   <div>
                     <dt>Bed voidage</dt>
                     <dd>{fmt(rx.epsilon, 2)}</dd>
+                  </div>
+                  <div>
+                    <dt>Heat media temp</dt>
+                    <dd>{fmt(T_heat, 0)} <small>°C</small></dd>
                   </div>
                 </dl>
               </div>
