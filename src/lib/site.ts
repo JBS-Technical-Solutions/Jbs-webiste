@@ -9,6 +9,7 @@ export const site = {
 export const nav = [
   { href: "/about", label: "About" },
   { href: "/digital-twins", label: "Digital Twins" },
+  { href: "/distillation", label: "Distillation" },
 ];
 
 export const contactHref = "/contact";
