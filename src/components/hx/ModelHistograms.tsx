@@ -35,16 +35,17 @@ function fallbackRange<R>(v: HistogramVariable<R>, results: R[]): Range {
 
 /**
  * Scale for bar height.
- * - showFullScale: 100% = max of this variable among the models in the current run
- * - otherwise: training range, expanded if a current result exceeds it
+ * - showFullScale: 0 → variable max (training / known max, raised if a live result is higher).
+ *   Bar height ∝ output value, so 100% in the legend is that variable's max.
+ * - otherwise: training range band, expanded if a current result falls outside it.
  */
-function scaleRange<R>(v: HistogramVariable<R>, results: R[], toCurrentMax: boolean): Range {
+function scaleRange<R>(v: HistogramVariable<R>, results: R[], toVariableMax: boolean): Range {
   const values = results.map((r) => v.value(r)).filter((x): x is number => x != null && Number.isFinite(x));
-  if (toCurrentMax) {
-    if (!values.length) return { min: 0, max: 1 };
-    return { min: 0, max: Math.max(...values) || 1 };
-  }
   const base = v.range ?? fallbackRange(v, results);
+  if (toVariableMax) {
+    const liveMax = values.length ? Math.max(...values) : 0;
+    return { min: 0, max: Math.max(base.max, liveMax, 1e-9) };
+  }
   if (!values.length) return base;
   return {
     min: Math.min(base.min, ...values),
@@ -79,7 +80,7 @@ export default function ModelHistograms<K extends string, R extends { model: K }
         <h3>Outputs per model</h3>
         <p>
           {showFullScale
-            ? "Each bar is relative to the highest value among these models for that variable (100% = that max). The number above the bar is the actual value. Click a card to select that model."
+            ? "Bar height follows each output value against that variable’s max (shown as 100% above). The number on the bar is the actual value. Click a card to select that model."
             : "Each bar shows where the value sits in its data range (0% = lowest, 100% = highest); the actual value is written above the bar. Click a card to select that model."}
         </p>
         {showFullScale && (
