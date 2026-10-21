@@ -1,16 +1,138 @@
 /* Methanol reactor simulator styles; builds on hx.css, scoped to .meoh-app. */
-.meoh-app .hydraulics dl {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+.meoh-app .rx-geometry {
+  margin-top: 1rem;
+  padding: 1rem 1.05rem 1.05rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, rgba(255, 138, 61, 0.06), transparent 42%),
+    rgba(8, 12, 18, 0.55);
 }
 
-@media (max-width: 900px) {
-  .meoh-app .hydraulics dl {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+.meoh-app .rx-geometry-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.55rem 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.meoh-app .rx-geometry-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.meoh-app .rx-geometry-note {
+  margin: 0.2rem 0 0;
+  color: var(--ink-dim);
+  font-size: 0.72rem;
+}
+
+.meoh-app .rx-geometry-reaction {
+  margin: 0;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid color-mix(in srgb, #ff8a3d 35%, var(--line));
+  border-radius: 999px;
+  color: #ffb27a;
+  font-family: var(--hx-mono), monospace;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.meoh-app .rx-geometry-body {
+  display: grid;
+  grid-template-columns: minmax(11rem, 0.85fr) minmax(0, 1.4fr);
+  gap: 0.9rem 1.1rem;
+  align-items: center;
+}
+
+.meoh-app .rx-geometry-sketch {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 18rem;
+}
+
+.meoh-app .rx-geo-jacket {
+  fill: rgba(255, 138, 61, 0.1);
+  stroke: rgba(255, 138, 61, 0.55);
+  stroke-width: 1.5;
+}
+
+.meoh-app .rx-geo-tube {
+  fill: rgba(12, 18, 26, 0.85);
+  stroke: rgba(232, 238, 246, 0.35);
+  stroke-width: 1.25;
+}
+
+.meoh-app .rx-geo-pellet {
+  fill: rgba(232, 238, 246, 0.18);
+  stroke: rgba(232, 238, 246, 0.28);
+  stroke-width: 0.6;
+}
+
+.meoh-app .rx-geo-dim {
+  stroke: var(--ink-dim);
+  stroke-width: 1;
+}
+
+.meoh-app .rx-geo-label {
+  fill: var(--ink-dim);
+  font-family: var(--hx-mono), monospace;
+  font-size: 10px;
+}
+
+.meoh-app .rx-geometry-specs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem 0.75rem;
+  margin: 0;
+}
+
+.meoh-app .rx-geometry-specs > div {
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(8, 12, 18, 0.55);
+}
+
+.meoh-app .rx-geometry-specs dt {
+  margin: 0;
+  color: var(--ink-dim);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.meoh-app .rx-geometry-specs dd {
+  margin: 0.28rem 0 0;
+  color: var(--ink);
+  font-family: var(--hx-mono), monospace;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.meoh-app .rx-geometry-specs dd small {
+  color: var(--ink-dim);
+  font-size: 0.68rem;
+  font-weight: 500;
+}
+
+@media (max-width: 760px) {
+  .meoh-app .rx-geometry-body {
+    grid-template-columns: 1fr;
   }
-}
 
-@media (max-width: 560px) {
-  .meoh-app .hydraulics dl {
+  .meoh-app .rx-geometry-sketch {
+    max-width: 100%;
+  }
+
+  .meoh-app .rx-geometry-specs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

@@ -5,6 +5,7 @@ import Logo from "../Logo";
 import ModelHistograms, { type HistogramVariable } from "../hx/ModelHistograms";
 import R2Charts from "./R2Charts";
 import ReactorDiagram from "./ReactorDiagram";
+import ReactorGeometry from "./ReactorGeometry";
 import {
   BACKEND_OFFLINE,
   type BackendInfo,
@@ -140,7 +141,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
   const result = results?.find((r) => r.model === model) ?? null;
   const out = result?.outputs ?? null;
   const T_heat = info?.reactor.T_heat_C ?? T_HEAT_DEFAULT;
-  const dP = out && ranInputs ? ranInputs.P_in_bar_g - out.P_out_bar_g : null;
   const rx = info?.reactor;
 
   const update = (key: keyof TwinInputs, raw: string) => {
@@ -297,66 +297,12 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               </div>
             )}
 
-            <div className="metrics">
-              <article className="metric hero-metric">
-                <span>Bed temp @ 0.2 m</span>
-                <strong>{fmt(out?.T_02)}</strong>
-                <em>°C</em>
-              </article>
-              <article className="metric">
-                <span>Bed temp @ 0.4 m</span>
-                <strong>{fmt(out?.T_04)}</strong>
-                <em>°C</em>
-              </article>
-              <article className="metric">
-                <span>Bed temp @ 0.6 m</span>
-                <strong>{fmt(out?.T_06)}</strong>
-                <em>°C</em>
-              </article>
-              <article className="metric">
-                <span>Bed temp @ 0.8 m</span>
-                <strong>{fmt(out?.T_08)}</strong>
-                <em>°C</em>
-              </article>
-              <article className="metric">
-                <span>Bed ΔT</span>
-                <strong>
-                  {out && ranInputs ? fmt(out.T_10 - ranInputs.T_in_C) : "—"}
-                </strong>
-                <em>°C</em>
-              </article>
-              <article className="metric">
-                <span>Pressure drop</span>
-                <strong>{fmt(dP, 3)}</strong>
-                <em>bar</em>
-              </article>
-            </div>
-
             {rx && (
-              <div className="hydraulics">
-                <p className="hydraulics-head">
-                  Reactor geometry
-                  <em> · constant for every operating point</em>
-                </p>
-                <dl>
-                  <div>
-                    <dt>Tube diameter</dt>
-                    <dd>{fmt(rx.D_m, 2)} <small>m</small></dd>
-                  </div>
-                  <div>
-                    <dt>Bed length</dt>
-                    <dd>{fmt(rx.L_m, 1)} <small>m</small></dd>
-                  </div>
-                  <div>
-                    <dt>Bed voidage</dt>
-                    <dd>{fmt(rx.epsilon, 2)}</dd>
-                  </div>
-                  <div>
-                    <dt>Heat media temp</dt>
-                    <dd>{fmt(T_heat, 0)} <small>°C</small></dd>
-                  </div>
-                </dl>
-              </div>
+              <ReactorGeometry
+                reactor={rx}
+                T_heat={T_heat}
+                note="constant for every operating point"
+              />
             )}
 
             {result && result.warnings.length > 0 && (
