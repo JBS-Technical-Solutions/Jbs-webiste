@@ -33,10 +33,18 @@ function fallbackRange<R>(v: HistogramVariable<R>, results: R[]): Range {
   return { min: 0, max: max * 1.25 || 1 };
 }
 
-/** Expand the scale so 100% is at least the largest value among the current model results. */
-function scaleRange<R>(v: HistogramVariable<R>, results: R[]): Range {
-  const base = v.range ?? fallbackRange(v, results);
+/**
+ * Scale for bar height.
+ * - showFullScale: 100% = max of this variable among the models in the current run
+ * - otherwise: training range, expanded if a current result exceeds it
+ */
+function scaleRange<R>(v: HistogramVariable<R>, results: R[], toCurrentMax: boolean): Range {
   const values = results.map((r) => v.value(r)).filter((x): x is number => x != null && Number.isFinite(x));
+  if (toCurrentMax) {
+    if (!values.length) return { min: 0, max: 1 };
+    return { min: 0, max: Math.max(...values) || 1 };
+  }
+  const base = v.range ?? fallbackRange(v, results);
   if (!values.length) return base;
   return {
     min: Math.min(base.min, ...values),
@@ -61,15 +69,18 @@ export default function ModelHistograms<K extends string, R extends { model: K }
   hideAxis?: boolean;
   showFullScale?: boolean;
 }) {
-  const ranges = Object.fromEntries(variables.map((v) => [v.key, scaleRange(v, results)])) as Record<string, Range>;
+  const ranges = Object.fromEntries(
+    variables.map((v) => [v.key, scaleRange(v, results, showFullScale)]),
+  ) as Record<string, Range>;
 
   return (
     <section className={`panel model-hist${hideAxis ? " no-axis" : ""}`}>
       <div className="panel-head">
         <h3>Outputs per model</h3>
         <p>
-          Each bar shows where the value sits in its data range (0% = lowest, 100% = highest); the actual value is
-          written above the bar. Click a card to select that model.
+          {showFullScale
+            ? "Each bar is relative to the highest value among these models for that variable (100% = that max). The number above the bar is the actual value. Click a card to select that model."
+            : "Each bar shows where the value sits in its data range (0% = lowest, 100% = highest); the actual value is written above the bar. Click a card to select that model."}
         </p>
         {showFullScale && (
           <ul className="mh-fullscale" aria-label="What 100% means for each variable">

@@ -89,7 +89,7 @@
 
 .meoh-app .rx-geometry-specs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.55rem 0.75rem;
   margin: 0;
 }

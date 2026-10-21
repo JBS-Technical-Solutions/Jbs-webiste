@@ -2,9 +2,7 @@ type ReactorSpec = {
   reaction: string;
   D_m: number;
   L_m: number;
-  h_heat_W_m2K: number;
   epsilon: number;
-  dp_m: number;
 };
 
 function fmt(n: number | null | undefined, digits = 2) {
@@ -28,8 +26,6 @@ export default function ReactorGeometry({
     { label: "Tube diameter", value: fmt(reactor.D_m, 2), unit: "m" },
     { label: "Bed length", value: fmt(reactor.L_m, 1), unit: "m" },
     { label: "Bed voidage", value: fmt(reactor.epsilon, 2), unit: "" },
-    { label: "Particle size", value: fmt(reactor.dp_m * 1000, 1), unit: "mm" },
-    { label: "Wall h", value: fmt(reactor.h_heat_W_m2K, 0), unit: "W/m²·K" },
     { label: "Heat media", value: fmt(T_heat, 0), unit: "°C" },
   ];
 
