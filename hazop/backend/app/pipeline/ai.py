@@ -24,6 +24,7 @@ The draft was already written by reading the PFD, then reading each P&ID node fr
 Keep these exactly:
 - The same nodes, in the same order. Do not add, merge or remove a node.
 - boundary is the node description: a short summary of the route (where the line comes from, what main equipment it passes, and where it goes). Do not list every instrument or valve.
+- Nodes are marked with a coloured dashed line on the P&ID. That mark often runs alongside piping and also through equipment. Only describe a stretch as piping when the coloured dashed line runs alongside a piping segment. Where the coloured dashed line passes through equipment, that stretch is not piping — name the equipment, do not invent a pipe there.
 - design_intent is one sentence: the overall purpose of that node.
 - design_conditions are the design and operating pressure and temperature of the main equipment only. Use a number only when it is on the P&ID. Do not add piping classes or small valves.
 

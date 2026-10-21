@@ -208,8 +208,10 @@ def _drawing_segments(items):
 def _colored_marks(page):
     """Saturated strokes and mark-up on the PDF, grouped by colour, in 0-1 page coordinates.
 
-    A coloured HAZOP node is one of these colours followed along the piping. Scanned sheets
-    have no vectors, so this list is empty and the text node marks are used instead.
+    A coloured HAZOP node is one of these colours (typically a dashed mark) followed along the
+    drawing. Segments that run alongside piping are piping for the node description; segments
+    that pass through equipment are not piping. Scanned sheets have no vectors, so this list
+    is empty and the text node marks are used instead.
     """
     groups = {}
 

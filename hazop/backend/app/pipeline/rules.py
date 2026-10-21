@@ -327,8 +327,42 @@ def _line_phrase(ctx, line):
     return f"P&ID line {tag}"
 
 
-def _lines_on_route(ctx, source, target):
-    """Process lines from this inlet toward the main equipment, in left-to-right order."""
+def _point_in_box(px, py, box, pad=0.012):
+    return box[0] - pad <= px <= box[2] + pad and box[1] - pad <= py <= box[3] + pad
+
+
+def _segment_through_equipment(seg, equipment):
+    """True when the coloured stroke mainly sits inside equipment (not alongside piping)."""
+    points = [(seg[0], seg[1]), (seg[2], seg[3]), ((seg[0] + seg[2]) / 2, (seg[1] + seg[3]) / 2)]
+    for eq in equipment or []:
+        box = eq.get("box")
+        if not box or len(box) != 4:
+            continue
+        if sum(1 for px, py in points if _point_in_box(px, py, box)) >= 2:
+            return True
+    return False
+
+
+def _piping_segments(segments, equipment):
+    """Colour-mark strokes that run alongside piping — exclude stretches drawn through equipment."""
+    return [seg for seg in (segments or []) if not _segment_through_equipment(seg, equipment)]
+
+
+def _line_alongside_color(line, piping_segs, limit=None):
+    """A line tag counts as piping on the node only when it sits on a piping (not through-equipment) stroke."""
+    if not piping_segs:
+        return False
+    near = _COLOR_NEAR if limit is None else limit
+    dist = min(_point_seg(px, py, seg) for px, py in _entity_points(line) for seg in piping_segs)
+    return dist <= near
+
+
+def _lines_on_route(ctx, source, target, piping_segs=None):
+    """Process lines from this inlet toward the main equipment, in left-to-right order.
+
+    When colour-mark segments are given, only lines whose tags sit alongside a piping
+    segment of that mark are kept. Colour that only passes through equipment is not piping.
+    """
     box = source.get("box") or [0, 0, 0, 0]
     sy = (box[1] + box[3]) / 2
     sx = _cx(source)
@@ -338,6 +372,8 @@ def _lines_on_route(ctx, source, target):
     for line in ctx.process_lines:
         tag = line.get("tag")
         if not tag or tag in seen:
+            continue
+        if piping_segs is not None and not _line_alongside_color(line, piping_segs):
             continue
         boxes = line.get("boxes") or ([line["box"]] if line.get("box") else [])
         for candidate in boxes:
@@ -350,8 +386,13 @@ def _lines_on_route(ctx, source, target):
     return sorted(found, key=_cx)
 
 
-def _node_description(ctx, color=None):
-    """A short route summary, read left to right, naming the P&ID line and its PFD stream."""
+def _node_description(ctx, color=None, color_segments=None):
+    """A short route summary, read left to right, naming the P&ID line and its PFD stream.
+
+    Colour-dashed node marks: only the parts that run alongside a piping segment are
+    described as piping. Where the same mark passes through equipment, that stretch is
+    equipment on the route — not a piping segment.
+    """
     fluid = ctx.fluid
     large = _large_equipment(ctx)
     vessels = [e for e in large if e.get("kind") == "vessel"]
@@ -362,6 +403,13 @@ def _node_description(ctx, color=None):
     if not sources and large:
         sources = [{"description": _eq_phrase(large[0]), "box": large[0].get("box"), "_skip": large[0]["tag"]}]
     end_x = _cx(target) if target else 1
+    piping_segs = None
+    if color_segments is not None:
+        # Geometry of the coloured dashed mark: only strokes alongside piping count as piping.
+        piping_segs = _piping_segments(color_segments, large)
+    elif color:
+        # Colour name only (no geometry): still avoid inventing piping where none was read.
+        piping_segs = [] if not ctx.process_lines else None
 
     def _on_this_inlet(item, source):
         if source.get("_skip") and item.get("tag") == source.get("_skip"):
@@ -379,9 +427,15 @@ def _node_description(ctx, color=None):
         on_path = sorted([v for v in valves if _on_this_inlet(v, source)], key=_cx)
         if on_path:
             through.append(_join_tags([v.get("tag") for v in on_path]))
-        route_lines = _lines_on_route(ctx, source, target)
+        route_lines = _lines_on_route(ctx, source, target, piping_segs=piping_segs)
         where = f" on {_and([_line_phrase(ctx, line) for line in route_lines[:2]])}" if route_lines else ""
-        lead = f"{fluid.capitalize()} line" if index == 0 else f"Another {fluid} line"
+        # "line" only when a real piping segment is on the colour mark; otherwise the route is through equipment.
+        if route_lines:
+            lead = f"{fluid.capitalize()} line" if index == 0 else f"Another {fluid} line"
+        elif through or target:
+            lead = f"{fluid.capitalize()}" if index == 0 else f"More {fluid}"
+        else:
+            lead = f"{fluid.capitalize()} line" if index == 0 else f"Another {fluid} line"
         origin = _conn_name(source)
         if through and target:
             sentences.append(f"{lead}{where} from {origin} going through {', '.join(through)} to {target['tag']}.")
@@ -392,8 +446,13 @@ def _node_description(ctx, color=None):
         else:
             sentences.append(f"{lead}{where} from {origin}.")
     if vessels:
-        outlet = [line for line in _lines_on_route(ctx, vessels[0], None) if _cx(line) > _cx(vessels[0])]
-        outlet_text = f" through {_line_phrase(ctx, outlet[0])}" if outlet else " through the outlet liquid line"
+        outlet = [line for line in _lines_on_route(ctx, vessels[0], None, piping_segs=piping_segs) if _cx(line) > _cx(vessels[0])]
+        if outlet:
+            outlet_text = f" through {_line_phrase(ctx, outlet[0])}"
+        elif piping_segs is not None and not piping_segs:
+            outlet_text = f" from {vessels[0]['tag']}"
+        else:
+            outlet_text = " through the outlet liquid line"
         liquid = [c for c in ctx.dests if any(word in _conn_name(c) for word in ("separat", "liquid", "oil", "condensate", "water"))]
         chosen = liquid or list(ctx.dests)
         if chosen:
@@ -1084,10 +1143,10 @@ def _component_rows(node, ctx):
         _specific_instrument_row(node, ctx, inst)
 
 
-def _pinpoint_node(node, ctx, color=None):
+def _pinpoint_node(node, ctx, color=None, color_segments=None):
     """Name each component by its duty, and write the node description from the start and the equipment."""
     _component_rows(node, ctx)
-    node["boundary"] = _node_description(ctx, color)
+    node["boundary"] = _node_description(ctx, color, color_segments=color_segments)
     node["design_intent"] = _overall_intent(ctx)
     by_spec = {}
     for line in ctx.lines:
@@ -1695,8 +1754,9 @@ def _entity_points(ent):
 def _color_nodes(ext):
     """One HAZOP node per colour that a NODE label points at.
 
-    The colour is followed from the first stroke to the last. Every line, instrument,
-    valve and equipment item sitting on that colour belongs to the node.
+    The colour is followed from the first stroke to the last. Equipment, instruments and
+    valves on that colour belong to the node. A line tag is included only where the colour
+    runs alongside a piping segment — colour drawn through equipment is not treated as piping.
     """
     colors = [c for c in (ext.get("node_colors") or []) if c.get("segments")]
     raw = ext.get("tokens") or []
@@ -1734,6 +1794,10 @@ def _color_nodes(ext):
     if not claimed:
         return None
 
+    equipment_ents = [
+        e for e in ext.get("equipment") or []
+        if e.get("box") and not e.get("offpage") and e.get("kind") not in ("panel", "package")
+    ]
     catalog = []
     for key, tag_key in (("equipment", "tag"), ("instruments", "tag"), ("lines", "tag"), ("valves", "code"),
                          ("connectors", "tag"), ("spec_breaks", "tag")):
@@ -1749,6 +1813,10 @@ def _color_nodes(ext):
         best_hue, best_dist = None, 1e9
         for hue, slot in claimed.items():
             segments = slot["color"].get("segments") or []
+            if key == "lines":
+                segments = _piping_segments(segments, equipment_ents)
+                if not segments:
+                    continue
             dist = min(_point_seg(px, py, seg) for px, py in points for seg in segments)
             if dist < best_dist:
                 best_hue, best_dist = hue, dist
@@ -1795,6 +1863,7 @@ def _color_nodes(ext):
             "tags": tags,
             "design_intent": "",
             "color": name,
+            "color_segments": list(slot["color"].get("segments") or []),
             "number": header["number"],
         })
     claimed_numbers = {slot["header"]["number"] for slot in claimed.values()}
@@ -1988,6 +2057,7 @@ def _build(ctx, ext, entry, nid):
         parts.append(relief_node(ctx, nid, protected))
     if not parts:
         anchor = lines[0]["tag"] if lines else (entry.get("title") or next(iter(sorted(tags)), f"Node {nid}"))
+        # Colour through equipment is not piping — only name it process piping when a line tag was read.
         fake = {"tag": anchor, "kind": "equipment", "description": "process piping" if lines else "",
                 "design": {}, "electric": False}
         node = equipment_node(ctx, fake, nid)
@@ -1997,7 +2067,7 @@ def _build(ctx, ext, entry, nid):
     node = _merge(parts)
     if (entry.get("title") or "").strip():
         node["title"] = entry["title"].strip()
-    _pinpoint_node(node, ctx, entry.get("color"))
+    _pinpoint_node(node, ctx, entry.get("color"), color_segments=entry.get("color_segments"))
     if (entry.get("design_intent") or "").strip():
         node["design_intent"] = entry["design_intent"].strip()
     return node
@@ -2185,7 +2255,9 @@ def _compile_parts(pieces, source):
     study = dict((pieces[0].get("study") or {}) if pieces else {})
     if source == "color":
         note = (f"The drawing was studied one node at a time ({len(pieces)} colour-marked nodes). "
-                "Each colour was followed from its start to its end, including the piping, instruments and valves on it.")
+                "Each colour was followed from its start to its end. Piping is only the stretch where the "
+                "coloured dashed mark runs alongside a piping segment; where it passes through equipment, "
+                "that stretch is not treated as piping.")
     else:
         note = (f"The drawing was split into {len(pieces)} parts. Each part was studied on its own, "
                 "then the parts were compiled into this worksheet.")
@@ -2237,8 +2309,10 @@ def _worksheet(ext, study, plan, source):
         assumptions.append("HAZOP nodes were defined by the user before the worksheet was generated. Each node was then studied from its start to its end.")
     elif source == "color":
         assumptions.append(
-            "Each node is one colour marked against a node number on the P&ID. "
-            "That colour was followed from its start to its end, and the piping, instruments and valves on it were studied together."
+            "Each node is one coloured dashed mark against a node number on the P&ID. "
+            "That colour was followed from its start to its end. In the node description, only the parts of "
+            "the mark that run alongside a piping segment are described as piping; where the mark passes "
+            "through equipment, that part is equipment on the route, not piping."
         )
     elif source == "drawing":
         assumptions.append("HAZOP nodes were taken from the node numbers already marked on this sheet.")
