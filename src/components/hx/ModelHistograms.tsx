@@ -9,8 +9,13 @@ export type HistogramVariable<R> = {
   label: string;
   unit: string;
   color: string;
+  /** Value used for bar height / scale (typically magnitude). */
   value: (r: R) => number | null | undefined;
   range?: Range;
+  /** Optional formatter for the number written above the bar. */
+  format?: (n: number) => string;
+  /** Optional formatter for the 100% legend value. */
+  formatFullScale?: (max: number) => string;
 };
 
 function short(n: number) {
@@ -28,6 +33,17 @@ function fallbackRange<R>(v: HistogramVariable<R>, results: R[]): Range {
   return { min: 0, max: max * 1.25 || 1 };
 }
 
+/** Expand the scale so 100% is at least the largest value among the current model results. */
+function scaleRange<R>(v: HistogramVariable<R>, results: R[]): Range {
+  const base = v.range ?? fallbackRange(v, results);
+  const values = results.map((r) => v.value(r)).filter((x): x is number => x != null && Number.isFinite(x));
+  if (!values.length) return base;
+  return {
+    min: Math.min(base.min, ...values),
+    max: Math.max(base.max, ...values),
+  };
+}
+
 export default function ModelHistograms<K extends string, R extends { model: K }>({
   results,
   variables,
@@ -35,6 +51,7 @@ export default function ModelHistograms<K extends string, R extends { model: K }
   titles,
   onSelect,
   hideAxis = false,
+  showFullScale = false,
 }: {
   results: R[];
   variables: HistogramVariable<R>[];
@@ -42,11 +59,9 @@ export default function ModelHistograms<K extends string, R extends { model: K }
   titles: Record<K, string>;
   onSelect: (m: K) => void;
   hideAxis?: boolean;
+  showFullScale?: boolean;
 }) {
-  const ranges = Object.fromEntries(variables.map((v) => [v.key, v.range ?? fallbackRange(v, results)])) as Record<
-    string,
-    Range
-  >;
+  const ranges = Object.fromEntries(variables.map((v) => [v.key, scaleRange(v, results)])) as Record<string, Range>;
 
   return (
     <section className={`panel model-hist${hideAxis ? " no-axis" : ""}`}>
@@ -56,6 +71,22 @@ export default function ModelHistograms<K extends string, R extends { model: K }
           Each bar shows where the value sits in its data range (0% = lowest, 100% = highest); the actual value is
           written above the bar. Click a card to select that model.
         </p>
+        {showFullScale && (
+          <ul className="mh-fullscale" aria-label="What 100% means for each variable">
+            {variables.map((v) => {
+              const { max } = ranges[v.key];
+              const full = v.formatFullScale ? v.formatFullScale(max) : short(max);
+              return (
+                <li key={v.key} style={{ "--vc": v.color } as CSSProperties}>
+                  <span>{v.label}</span>
+                  <strong>
+                    100% = {full} {v.unit}
+                  </strong>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
 
       <div className="mh-grid" style={{ "--mh-cols": variables.length } as CSSProperties}>
@@ -93,11 +124,11 @@ export default function ModelHistograms<K extends string, R extends { model: K }
                       style={{ "--vc": v.color } as CSSProperties}
                       title={
                         known
-                          ? `${v.label}: ${value.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${v.unit} · ${raw.toFixed(0)}% of data range (${short(min)} – ${short(max)})`
+                          ? `${v.label}: ${v.format ? v.format(value) : value.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${v.unit} · ${raw.toFixed(0)}% of scale (${v.formatFullScale ? v.formatFullScale(min) : short(min)} – ${v.formatFullScale ? v.formatFullScale(max) : short(max)})`
                           : `${v.label}: no result`
                       }
                     >
-                      <span className="mh-value">{known ? short(value) : "—"}</span>
+                      <span className="mh-value">{known ? (v.format ? v.format(value) : short(value)) : "—"}</span>
                       <span className="mh-track">
                         {known && <span className="mh-bar" style={{ height: `${Math.max(pct, 1.5)}%` }} />}
                       </span>

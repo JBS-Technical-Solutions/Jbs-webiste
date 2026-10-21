@@ -13,10 +13,12 @@ services:
     environment:
       HX_API_URL: http://heat-exchanger:8000
       MEOH_API_URL: http://methanol-reformer:8000
+      MEOH_HEAT_API_URL: http://methanol-heating-media:8000
       PUMP_API_URL: http://water-pump:8000
     depends_on:
       - heat-exchanger
       - methanol-reformer
+      - methanol-heating-media
       - water-pump
     restart: unless-stopped
     logging: *logging
@@ -28,6 +30,11 @@ services:
 
   methanol-reformer:
     build: ./simulators/methanol-reformer
+    restart: unless-stopped
+    logging: *logging
+
+  methanol-heating-media:
+    build: ./simulators/methanol-heating-media
     restart: unless-stopped
     logging: *logging
 

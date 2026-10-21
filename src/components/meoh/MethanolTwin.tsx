@@ -59,10 +59,23 @@ const histogramVariables = (info: BackendInfo | null): HistogramVariable<TwinOut
     label: "Heat duty",
     unit: "kW",
     color: "#a78bfa",
-    value: (r) => r.outputs?.Q_kW,
+    // Bar scale uses magnitude; labels show heat duty as negative (heat into the bed).
+    value: (r) => (r.outputs?.Q_kW != null ? Math.abs(r.outputs.Q_kW) : null),
+    format: (n) => `-${n.toLocaleString(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 1 })}`,
+    formatFullScale: (max) =>
+      `-${max.toLocaleString(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 1 })}`,
     range: info?.output_ranges?.Q_total_kW,
   },
 ];
+
+function duty(n: number | null | undefined, digits = 2) {
+  if (n == null || !Number.isFinite(n)) return "—";
+  const shown = -Math.abs(n);
+  return shown.toLocaleString(undefined, {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+  });
+}
 
 type Status = "checking" | "online" | "offline";
 
@@ -72,10 +85,6 @@ function fmt(n: number | null | undefined, digits = 2) {
     maximumFractionDigits: digits,
     minimumFractionDigits: digits,
   });
-}
-
-function signed(n: number, digits = 2) {
-  return `${n >= 0 ? "+" : ""}${fmt(n, digits)}`;
 }
 
 export default function MethanolTwin({ className = "" }: { className?: string }) {
@@ -130,7 +139,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
 
   const result = results?.find((r) => r.model === model) ?? null;
   const out = result?.outputs ?? null;
-  const ref = result?.physics_ref ?? null;
   const T_heat = info?.reactor.T_heat_C ?? T_HEAT_DEFAULT;
   const dP = out && ranInputs ? ranInputs.P_in_bar_g - out.P_out_bar_g : null;
   const rx = info?.reactor;
@@ -277,7 +285,7 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               T_out={out?.T_10}
               P_out={out?.P_out_bar_g}
               X_pct={out?.X_pct}
-              Q_kW={out?.Q_kW}
+              Q_kW={out?.Q_kW != null ? -Math.abs(out.Q_kW) : undefined}
               profile={PROFILE_KEYS.map((k) => out?.[k])}
               T_heat={T_heat}
               animate={out != null}
@@ -307,7 +315,7 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               </article>
               <article className="metric">
                 <span>Duty</span>
-                <strong>{fmt(out?.Q_kW)}</strong>
+                <strong>{duty(out?.Q_kW)}</strong>
                 <em>kW</em>
               </article>
               <article className="metric">
@@ -321,14 +329,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                 <em>bar</em>
               </article>
             </div>
-
-            {out && ref && (
-              <p className="phys-ref">
-                vs calibrated physics{result?.eta != null ? ` (η ${result.eta.toExponential(3)})` : ""}: T out{" "}
-                {signed(out.T_10 - ref.T_10)}° · conversion {signed(out.X_pct - ref.X_pct, 3)} pts · P out{" "}
-                {signed(out.P_out_bar_g - ref.P_out_bar_g, 3)} bar · duty {signed(out.Q_kW - ref.Q_kW, 3)} kW
-              </p>
-            )}
 
             {rx && (
               <div className="hydraulics">
@@ -392,7 +392,7 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                       <td>{fmt(r.outputs?.T_10)}</td>
                       <td>{fmt(r.outputs?.X_pct)}</td>
                       <td>{fmt(r.outputs?.P_out_bar_g, 3)}</td>
-                      <td>{fmt(r.outputs?.Q_kW)}</td>
+                      <td>{duty(r.outputs?.Q_kW)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -413,7 +413,7 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               pinn: MODELS.pinn.title,
             }}
             onSelect={setModel}
-            hideAxis
+            showFullScale
           />
         )}
 

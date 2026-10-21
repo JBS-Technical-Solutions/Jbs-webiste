@@ -1,0 +1,274 @@
+/* Methanol reactor simulator styles; builds on hx.css, scoped to .meoh-app. */
+.meoh-app .rx-stage {
+  display: grid;
+  grid-template-columns: 8.75rem minmax(0, 1fr) 8.75rem;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.meoh-app .rx-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.meoh-app .rx-kicker {
+  margin: 0;
+  color: var(--ink-dim);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.meoh-app .rx-stream.in {
+  align-items: stretch;
+  text-align: right;
+}
+
+.meoh-app .rx-stream.out {
+  align-items: stretch;
+  text-align: left;
+}
+
+.meoh-app .rx-chip {
+  padding: 0.38rem 0.55rem 0.42rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(8, 12, 18, 0.72);
+}
+
+.meoh-app .rx-stream.in .rx-chip {
+  border-right: 2px solid #3ecfcf;
+}
+
+.meoh-app .rx-stream.out .rx-chip {
+  border-left: 2px solid #ff8a3d;
+}
+
+.meoh-app .rx-chip span {
+  display: block;
+  color: var(--ink-dim);
+  font-size: 0.58rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.meoh-app .rx-chip strong {
+  display: block;
+  margin-top: 0.06rem;
+  color: var(--ink);
+  font-family: var(--hx-mono), monospace;
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.meoh-app .rx-chip em {
+  margin-left: 0.22rem;
+  color: var(--ink-dim);
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 500;
+}
+
+.meoh-app .rx-coil {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  opacity: 0.55;
+}
+
+.meoh-app .rx-diagram.is-live .rx-coil {
+  animation: rx-glow 2.4s ease-in-out infinite;
+}
+
+@keyframes rx-glow {
+  50% {
+    opacity: 0.95;
+  }
+}
+
+.meoh-app .rx-bed {
+  stroke: rgba(232, 238, 246, 0.4);
+  stroke-width: 1.5;
+}
+
+.meoh-app .rx-pellet {
+  fill: rgba(11, 17, 24, 0.28);
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-width: 0.8;
+}
+
+.meoh-app .rx-probe {
+  stroke: rgba(232, 238, 246, 0.35);
+  stroke-width: 1.2;
+  stroke-dasharray: 2 3;
+}
+
+.meoh-app .rx-sub {
+  fill: var(--ink-dim);
+  font-family: var(--hx-mono), monospace;
+  font-size: 11px;
+}
+
+.meoh-app .rx-specs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  margin: 0.2rem 0 1rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+}
+
+.meoh-app .rx-specs dt {
+  color: var(--ink-dim);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.meoh-app .rx-specs dd {
+  margin: 0.2rem 0 0;
+  font-family: var(--hx-mono), monospace;
+  font-size: 0.9rem;
+}
+
+.meoh-app .panel.rx-profile {
+  margin-top: 1.1rem;
+}
+
+.meoh-app .rx-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.meoh-app .rx-grid {
+  stroke: var(--line);
+}
+
+.meoh-app .rx-axis {
+  fill: var(--ink-dim);
+  font-family: var(--hx-mono), monospace;
+  font-size: 11px;
+}
+
+.meoh-app .rx-axis-title {
+  fill: var(--ink-dim);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.meoh-app .rx-heater {
+  stroke: #ff8a3d;
+  stroke-width: 1.5;
+  stroke-dasharray: 6 5;
+  opacity: 0.8;
+}
+
+.meoh-app .rx-heater-label {
+  fill: #ff8a3d;
+  font-family: var(--hx-mono), monospace;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.meoh-app .rx-series {
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.2s;
+}
+
+.meoh-app .rx-series:hover,
+.meoh-app .rx-series.active {
+  opacity: 1;
+}
+
+.meoh-app .rx-series polyline {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.meoh-app .rx-series.active polyline {
+  stroke-width: 3.2;
+}
+
+.meoh-app .rx-series circle {
+  fill: var(--bg-0);
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.meoh-app .rx-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.meoh-app .rx-legend button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.meoh-app .rx-legend button i {
+  width: 0.8rem;
+  height: 0.25rem;
+  border-radius: 999px;
+  background: var(--lc);
+}
+
+.meoh-app .rx-legend button:hover {
+  color: var(--ink);
+}
+
+.meoh-app .rx-legend button.active {
+  border-color: var(--lc);
+  color: var(--ink);
+  background: color-mix(in srgb, var(--lc) 12%, transparent);
+}
+
+@media (max-width: 760px) {
+  .meoh-app .rx-stage {
+    grid-template-columns: 1fr;
+  }
+
+  .meoh-app .rx-stream {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .meoh-app .rx-kicker {
+    flex-basis: 100%;
+  }
+
+  .meoh-app .rx-chip {
+    flex: 1 1 7.2rem;
+  }
+
+  .meoh-app .rx-stream.in .rx-chip,
+  .meoh-app .rx-stream.out .rx-chip {
+    text-align: left;
+    border-right: 1px solid var(--line);
+    border-left: 2px solid #3ecfcf;
+  }
+
+  .meoh-app .rx-stream.out .rx-chip {
+    border-left-color: #ff8a3d;
+  }
+}

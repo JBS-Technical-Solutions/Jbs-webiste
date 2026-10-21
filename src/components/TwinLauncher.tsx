@@ -29,10 +29,37 @@ const MethanolTwin = dynamic(() => import("./meoh/MethanolTwin"), {
   loading: LoadingSimulation,
 });
 
-const SIMULATIONS: Partial<Record<EquipmentModel["slug"], typeof HeatExchangerTwin>> = {
+const MethanolHeatingTwin = dynamic(() => import("./meoh-heat/MethanolHeatingTwin"), {
+  ssr: false,
+  loading: LoadingSimulation,
+});
+
+type SimKind = "heat-exchanger" | "methanol-reformer" | "methanol-heating-media" | "pump";
+
+type ActiveSimulation = {
+  kind: SimKind;
+  model: EquipmentModel;
+  title: string;
+};
+
+const SIMULATIONS: Partial<Record<SimKind, typeof HeatExchangerTwin>> = {
   "heat-exchanger": HeatExchangerTwin,
   "methanol-reformer": MethanolTwin,
+  "methanol-heating-media": MethanolHeatingTwin,
 };
+
+const MEOH_VARIANTS = [
+  {
+    kind: "methanol-reformer" as const,
+    title: "Methanol reactor",
+    blurb: "Fixed heating-media temperature. Set feed T, P and flow — the classic twin already on the site.",
+  },
+  {
+    kind: "methanol-heating-media" as const,
+    title: "Methanol heating media",
+    blurb: "Heating-media temperature is a live input with the feed. Same four models, plant-style jacket control.",
+  },
+];
 
 const order: EquipmentModel["slug"][] = ["heat-exchanger", "pump", "methanol-reformer"];
 const launchModels = order.map((slug) => models.find((m) => m.slug === slug)!);
@@ -40,8 +67,29 @@ const launchModels = order.map((slug) => models.find((m) => m.slug === slug)!);
 export default function TwinLauncher() {
   const [active, setActive] = useState<EquipmentModel | null>(null);
   const close = useCallback(() => setActive(null), []);
-  const [simulating, setSimulating] = useState<EquipmentModel | null>(null);
+  const [simulating, setSimulating] = useState<ActiveSimulation | null>(null);
   const closeSimulation = useCallback(() => setSimulating(null), []);
+  const [meohChooser, setMeohChooser] = useState(false);
+  const closeMeohChooser = useCallback(() => setMeohChooser(false), []);
+
+  const openSimulation = (model: EquipmentModel) => {
+    if (model.slug === "methanol-reformer") {
+      setMeohChooser(true);
+      return;
+    }
+    setSimulating({ kind: model.slug, model, title: `${model.name} · Digital twin simulation` });
+  };
+
+  const openMeohVariant = (kind: (typeof MEOH_VARIANTS)[number]["kind"]) => {
+    const model = models.find((m) => m.slug === "methanol-reformer")!;
+    const variant = MEOH_VARIANTS.find((v) => v.kind === kind)!;
+    setMeohChooser(false);
+    setSimulating({
+      kind,
+      model,
+      title: `${variant.title} · Digital twin simulation`,
+    });
+  };
 
   return (
     <>
@@ -80,7 +128,7 @@ export default function TwinLauncher() {
             <div className="px-6 pb-6">
               <button
                 type="button"
-                onClick={() => setSimulating(model)}
+                onClick={() => openSimulation(model)}
                 aria-haspopup="dialog"
                 aria-label={`${model.name} simulation`}
                 className="group/sim flex w-full items-center justify-between rounded-full bg-accent px-5 py-3.5 text-xs font-semibold uppercase tracking-[0.18em] text-white transition-colors duration-300 hover:bg-accent-deep"
@@ -101,7 +149,8 @@ export default function TwinLauncher() {
       </div>
 
       <TwinModal model={active} onClose={close} />
-      <SimulationModal model={simulating} onClose={closeSimulation} />
+      <MeohChooser open={meohChooser} onClose={closeMeohChooser} onPick={openMeohVariant} />
+      <SimulationModal sim={simulating} onClose={closeSimulation} />
     </>
   );
 }
@@ -129,15 +178,94 @@ function useDialog(open: boolean, onClose: () => void) {
   return closeRef;
 }
 
-function SimulationModal({ model, onClose }: { model: EquipmentModel | null; onClose: () => void }) {
-  const closeRef = useDialog(!!model, onClose);
-  const Simulation = model ? SIMULATIONS[model.slug] : null;
+function MeohChooser({
+  open,
+  onClose,
+  onPick,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onPick: (kind: (typeof MEOH_VARIANTS)[number]["kind"]) => void;
+}) {
+  const closeRef = useDialog(open, onClose);
 
   return (
     <AnimatePresence>
-      {model && (
+      {open && (
         <motion.div
-          key="simulation-modal"
+          key="meoh-chooser"
+          className="fixed inset-0 z-[65] flex items-end justify-center sm:items-center sm:p-6"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.35 }}
+        >
+          <div aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+          <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="meoh-chooser-title"
+            className="relative w-full max-w-2xl overflow-hidden rounded-t-3xl bg-paper shadow-2xl sm:rounded-3xl"
+            initial={{ y: 40, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 40, opacity: 0 }}
+            transition={{ duration: 0.45, ease: easeOut }}
+          >
+            <button
+              ref={closeRef}
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full border border-line bg-surface/80 backdrop-blur transition-colors hover:border-accent hover:bg-accent hover:text-white"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+
+            <div className="p-8 sm:p-10">
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-accent-deep">Methanol reformer</p>
+              <h2 id="meoh-chooser-title" className="mt-3 pr-12 text-3xl font-semibold uppercase tracking-tight">
+                Choose a twin
+              </h2>
+              <p className="mt-3 max-w-lg text-sm leading-relaxed text-muted">
+                Two methanol digital twins share this card. Pick the reactor model with fixed heat media, or the
+                heating-media model where jacket temperature is an operating input.
+              </p>
+
+              <div className="mt-8 grid gap-4 sm:grid-cols-2">
+                {MEOH_VARIANTS.map((variant) => (
+                  <button
+                    key={variant.kind}
+                    type="button"
+                    onClick={() => onPick(variant.kind)}
+                    className="group flex flex-col rounded-2xl border border-line bg-surface p-5 text-left transition-colors hover:border-accent hover:bg-accent-soft"
+                  >
+                    <span className="text-lg font-semibold uppercase tracking-tight">{variant.title}</span>
+                    <span className="mt-2 text-sm leading-relaxed text-muted">{variant.blurb}</span>
+                    <span className="mt-5 text-xs font-semibold uppercase tracking-[0.18em] text-accent transition-transform group-hover:translate-x-1">
+                      Open simulation →
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function SimulationModal({ sim, onClose }: { sim: ActiveSimulation | null; onClose: () => void }) {
+  const closeRef = useDialog(!!sim, onClose);
+  const Simulation = sim ? SIMULATIONS[sim.kind] : null;
+
+  return (
+    <AnimatePresence>
+      {sim && (
+        <motion.div
+          key={`simulation-modal-${sim.kind}`}
           role="dialog"
           aria-modal="true"
           aria-labelledby="simulation-title"
@@ -154,7 +282,7 @@ function SimulationModal({ model, onClose }: { model: EquipmentModel | null; onC
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
               </span>
               <p id="simulation-title" className="truncate text-xs font-semibold uppercase tracking-[0.25em]">
-                {model.name} · Digital twin simulation
+                {sim.title}
               </p>
             </div>
             <button
@@ -174,7 +302,7 @@ function SimulationModal({ model, onClose }: { model: EquipmentModel | null; onC
             {Simulation ? (
               <Simulation className="min-h-full" />
             ) : (
-              <WorkInProgress model={model} onClose={onClose} />
+              <WorkInProgress model={sim.model} onClose={onClose} />
             )}
           </div>
         </motion.div>
