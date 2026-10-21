@@ -1,7 +1,4 @@
-"""
-Runs code straight from the methanol heating-media notebooks, so the website uses the
-notebooks' own physics, data cleaning and model definitions.
-"""
+"""Runs code from the methanol heating-media notebooks."""
 
 import ast
 import contextlib
@@ -32,7 +29,6 @@ def code_cells(notebook: Path) -> list[str]:
 
 @contextlib.contextmanager
 def _in_notebook_dir():
-    # Notebooks open Methanol Reforming Data.xlsx by relative path.
     cwd = os.getcwd()
     os.chdir(ROOT)
     try:
@@ -46,7 +42,6 @@ def _namespace() -> dict:
 
 
 def run_notebook(notebook: Path, skip=("input(",), patches: dict[str, str] | None = None, quiet=True) -> dict:
-    """Execute every code cell in order, like Run All, and return the resulting namespace."""
     ns = _namespace()
     patches = dict(patches or {})
     with _in_notebook_dir():
@@ -65,7 +60,6 @@ def run_notebook(notebook: Path, skip=("input(",), patches: dict[str, str] | Non
 
 
 def load_definitions(notebook: Path, names: set[str], **preset) -> dict:
-    """Import notebook modules, constants and the named functions/classes, without training."""
     ns = _namespace()
     with _in_notebook_dir(), contextlib.redirect_stdout(io.StringIO()):
         for src in code_cells(notebook):

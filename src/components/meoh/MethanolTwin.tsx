@@ -59,10 +59,23 @@ const histogramVariables = (info: BackendInfo | null): HistogramVariable<TwinOut
     label: "Heat duty",
     unit: "kW",
     color: "#a78bfa",
-    value: (r) => r.outputs?.Q_kW,
+    // Bar scale uses magnitude; labels show heat duty as negative (heat into the bed).
+    value: (r) => (r.outputs?.Q_kW != null ? Math.abs(r.outputs.Q_kW) : null),
+    format: (n) => `-${n.toLocaleString(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 1 })}`,
+    formatFullScale: (max) =>
+      `-${max.toLocaleString(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 1 })}`,
     range: info?.output_ranges?.Q_total_kW,
   },
 ];
+
+function duty(n: number | null | undefined, digits = 2) {
+  if (n == null || !Number.isFinite(n)) return "—";
+  const shown = -Math.abs(n);
+  return shown.toLocaleString(undefined, {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+  });
+}
 
 type Status = "checking" | "online" | "offline";
 
@@ -72,10 +85,6 @@ function fmt(n: number | null | undefined, digits = 2) {
     maximumFractionDigits: digits,
     minimumFractionDigits: digits,
   });
-}
-
-function signed(n: number, digits = 2) {
-  return `${n >= 0 ? "+" : ""}${fmt(n, digits)}`;
 }
 
 export default function MethanolTwin({ className = "" }: { className?: string }) {
@@ -130,7 +139,6 @@ export default function MethanolTwin({ className = "" }: { className?: string })
 
   const result = results?.find((r) => r.model === model) ?? null;
   const out = result?.outputs ?? null;
-  const ref = result?.physics_ref ?? null;
   const T_heat = info?.reactor.T_heat_C ?? T_HEAT_DEFAULT;
   const dP = out && ranInputs ? ranInputs.P_in_bar_g - out.P_out_bar_g : null;
   const rx = info?.reactor;
@@ -277,7 +285,7 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               T_out={out?.T_10}
               P_out={out?.P_out_bar_g}
               X_pct={out?.X_pct}
-              Q_kW={out?.Q_kW}
+              Q_kW={out?.Q_kW != null ? -Math.abs(out.Q_kW) : undefined}
               profile={PROFILE_KEYS.map((k) => out?.[k])}
               T_heat={T_heat}
               animate={out != null}
@@ -289,42 +297,61 @@ export default function MethanolTwin({ className = "" }: { className?: string })
               </div>
             )}
 
-            {out && ref && (
-              <p className="phys-ref">
-                vs calibrated physics{result?.eta != null ? ` (η ${result.eta.toExponential(3)})` : ""}: T out{" "}
-                {signed(out.T_10 - ref.T_10)}° · conversion {signed(out.X_pct - ref.X_pct, 3)} pts · P out{" "}
-                {signed(out.P_out_bar_g - ref.P_out_bar_g, 3)} bar · duty {signed(out.Q_kW - ref.Q_kW, 3)} kW
-              </p>
-            )}
-
-            <div className="hydraulics">
-              <p className="hydraulics-head">
-                Reactor geometry &amp; heat media
-                <em> · tube and bed are fixed · pressure drop from this run</em>
-              </p>
-              <dl>
-                <div>
-                  <dt>Tube diameter</dt>
-                  <dd>{fmt(rx?.D_m, 2)} <small>m</small></dd>
-                </div>
-                <div>
-                  <dt>Bed length</dt>
-                  <dd>{fmt(rx?.L_m, 1)} <small>m</small></dd>
-                </div>
-                <div>
-                  <dt>Bed voidage</dt>
-                  <dd>{fmt(rx?.epsilon, 2)}</dd>
-                </div>
-                <div>
-                  <dt>Heat media temp</dt>
-                  <dd>{fmt(T_heat, 0)} <small>°C</small></dd>
-                </div>
-                <div>
-                  <dt>Pressure drop</dt>
-                  <dd>{fmt(dP, 3)} <small>bar</small></dd>
-                </div>
-              </dl>
+            <div className="metrics">
+              <article className="metric hero-metric">
+                <span>Outlet temperature</span>
+                <strong>{fmt(out?.T_10)}</strong>
+                <em>°C</em>
+              </article>
+              <article className="metric">
+                <span>Conversion</span>
+                <strong>{fmt(out?.X_pct, 2)}</strong>
+                <em>%</em>
+              </article>
+              <article className="metric">
+                <span>Heat media temp</span>
+                <strong>{fmt(T_heat, 0)}</strong>
+                <em>°C</em>
+              </article>
+              <article className="metric">
+                <span>Duty</span>
+                <strong>{duty(out?.Q_kW)}</strong>
+                <em>kW</em>
+              </article>
+              <article className="metric">
+                <span>Outlet pressure</span>
+                <strong>{fmt(out?.P_out_bar_g, 3)}</strong>
+                <em>bar_g</em>
+              </article>
+              <article className="metric">
+                <span>Pressure drop</span>
+                <strong>{fmt(dP, 3)}</strong>
+                <em>bar</em>
+              </article>
             </div>
+
+            {rx && (
+              <div className="hydraulics">
+                <p className="hydraulics-head">
+                  Reactor geometry
+                  <em> · constant for every operating point</em>
+                </p>
+                <dl>
+                  <div>
+                    <dt>Tube diameter</dt>
+                    <dd>{fmt(rx.D_m, 2)} <small>m</small></dd>
+                  </div>
+                  <div>
+                    <dt>Bed length</dt>
+                    <dd>{fmt(rx.L_m, 1)} <small>m</small></dd>
+                  </div>
+                  <div>
+                    <dt>Bed voidage</dt>
+                    <dd>{fmt(rx.epsilon, 2)}</dd>
+                  </div>
+                </dl>
+              </div>
+            )}
 
             {result && result.warnings.length > 0 && (
               <ul className="banner warn">
@@ -365,7 +392,7 @@ export default function MethanolTwin({ className = "" }: { className?: string })
                       <td>{fmt(r.outputs?.T_10)}</td>
                       <td>{fmt(r.outputs?.X_pct)}</td>
                       <td>{fmt(r.outputs?.P_out_bar_g, 3)}</td>
-                      <td>{fmt(r.outputs?.Q_kW)}</td>
+                      <td>{duty(r.outputs?.Q_kW)}</td>
                     </tr>
                   ))}
                 </tbody>

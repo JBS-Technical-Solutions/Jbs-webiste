@@ -1,4 +1,4 @@
-"""The four methanol heating-media twins (4 inputs including T_heat_C)."""
+"""Four methanol heating-media twins (4 inputs including T_heat_C)."""
 
 import json
 from pathlib import Path
@@ -51,8 +51,6 @@ def pinn_namespace(state_dict: dict, refs: dict) -> dict:
 
 
 class Twins:
-    """Loads trained artifacts and serves 4 inputs → 8 outputs for every model."""
-
     def __init__(self, artifacts: Path):
         torch.set_num_threads(1)
         self.physics = physics_namespace()
@@ -61,18 +59,9 @@ class Twins:
         refs = json.loads((artifacts / "pinn_refs.json").read_text(encoding="utf-8"))
         self.pinn = pinn_namespace(torch.load(artifacts / "pinn.pt", map_location="cpu"), refs)
 
-    def predict(
-        self,
-        model: str,
-        T_in_C: float,
-        P_in_bar_g: float,
-        T_heat_C: float,
-        F_in_kgmole_h: float,
-    ) -> dict:
+    def predict(self, model: str, T_in_C: float, P_in_bar_g: float, T_heat_C: float, F_in_kgmole_h: float) -> dict:
         ns = getattr(self, model)
-        out = ns["predict_outputs"](
-            float(T_in_C), float(P_in_bar_g), float(T_heat_C), float(F_in_kgmole_h),
-        )
+        out = ns["predict_outputs"](float(T_in_C), float(P_in_bar_g), float(T_heat_C), float(F_in_kgmole_h))
         values = {c: float(out[c]) for c in OUTPUT_COLS}
         if not all(np.isfinite(v) for v in values.values()):
             raise ValueError("the model returned a non-finite value")

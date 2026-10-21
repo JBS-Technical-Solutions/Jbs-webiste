@@ -1,10 +1,4 @@
-"""
-FastAPI backend for the JBS methanol heating-media digital twin
-(CH3OH → CO + 2H2 with variable jacket / heating-media temperature).
-
-Run:  uvicorn main:app --reload --port 8003
-Docs: http://localhost:8003/docs
-"""
+"""FastAPI backend for the JBS methanol heating-media digital twin."""
 
 import json
 import os
@@ -48,10 +42,10 @@ INPUT_LABELS = {
 
 
 class TwinInputs(BaseModel):
-    T_in_C: float = Field(ge=0, le=1000, description="Inlet temperature (°C)")
-    P_in_bar_g: float = Field(ge=0, le=50, description="Inlet pressure (bar_g)")
-    T_heat_C: float = Field(ge=0, le=1000, description="Heating media temperature (°C)")
-    F_in_kgmole_h: float = Field(ge=0, le=50, description="Methanol molar flow (kgmole/h)")
+    T_in_C: float = Field(ge=0, le=1000)
+    P_in_bar_g: float = Field(ge=0, le=50)
+    T_heat_C: float = Field(ge=0, le=1000)
+    F_in_kgmole_h: float = Field(ge=0, le=50)
 
 
 class PredictRequest(BaseModel):
@@ -60,14 +54,14 @@ class PredictRequest(BaseModel):
 
 
 class Outputs(BaseModel):
-    T_02: float = Field(description="Temperature at 0.2 m (°C)")
+    T_02: float
     T_04: float
     T_06: float
     T_08: float
-    T_10: float = Field(description="Outlet temperature at 1.0 m (°C)")
+    T_10: float
     P_out_bar_g: float
-    Q_kW: float = Field(description="Total heat input (kW); negative = heat lost")
-    X_pct: float = Field(description="Overall methanol conversion (%)")
+    Q_kW: float
+    X_pct: float
 
 
 class TwinOutput(BaseModel):
@@ -76,7 +70,7 @@ class TwinOutput(BaseModel):
     approach: str
     source: str
     outputs: Optional[Outputs] = None
-    physics_ref: Optional[Outputs] = Field(None, description="The model's own calibrated-physics branch")
+    physics_ref: Optional[Outputs] = None
     eta: Optional[float] = None
     error: Optional[str] = None
     warnings: list[str] = []

@@ -87,7 +87,6 @@ export default function R2Charts({
               {BARS.map((bar) => (
                 <span key={bar.key} style={{ "--vc": bar.color } as CSSProperties}>
                   {bar.label}
-                  <small>R²</small>
                 </span>
               ))}
             </div>

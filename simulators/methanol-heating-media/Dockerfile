@@ -12,9 +12,9 @@ RUN pip install -r backend/requirements.txt
 
 COPY . .
 
-# Train at build time so the saved models always match the installed library versions.
 WORKDIR /app/backend
-RUN python train.py
+# Prefer pre-trained artifacts shipped with the image; train only if missing.
+RUN if [ ! -f artifacts/metrics.json ]; then python train.py; fi
 
 RUN useradd --system --no-create-home app
 USER app
