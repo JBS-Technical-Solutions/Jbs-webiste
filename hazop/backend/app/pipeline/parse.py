@@ -857,6 +857,95 @@ def _parse_spec_breaks(tokens, lines):
     return out
 
 
+# Flow arrows drawn on the pipe. OCR may keep the glyph or read it as >, <, ->, <-.
+_ARROW_EAST = {"→", "⇒", "▶", "▷", "►", "->", "=>", ">", "»"}
+_ARROW_WEST = {"←", "⇐", "◀", "◁", "◄", "<-", "<=", "<", "«"}
+_ARROW_NORTH = {"↑", "⇑", "▲", "△", "^"}
+_ARROW_SOUTH = {"↓", "⇓", "▼", "▽", "v", "V"}
+
+
+def _arrow_heading(text):
+    """Compass heading of a flow arrow token, or None when the text is not an arrow."""
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    if raw in _ARROW_EAST:
+        return "E"
+    if raw in _ARROW_WEST:
+        return "W"
+    if raw in _ARROW_NORTH:
+        return "N"
+    if raw in _ARROW_SOUTH and raw not in {"V"}:  # lone V is usually a valve, not an arrow
+        return "S"
+    if re.fullmatch(r"(FLOW|FL)?\s*[->⇒→]+", raw, re.I):
+        return "E"
+    if re.fullmatch(r"(FLOW|FL)?\s*[<-⇐←]+", raw, re.I):
+        return "W"
+    return None
+
+
+def _attach_flow(lines, tokens, connectors):
+    """Put the flow direction of each pipe from the arrows drawn beside it, else FROM→TO."""
+    arrows = []
+    for token in tokens:
+        heading = _arrow_heading(token.text if hasattr(token, "text") else token.get("text"))
+        if not heading:
+            continue
+        box = token.box() if hasattr(token, "box") else token.get("box")
+        if not box:
+            continue
+        arrows.append({"heading": heading, "box": box})
+
+    def line_center(line):
+        boxes = line.get("boxes") or ([line["box"]] if line.get("box") else [])
+        if not boxes:
+            return None
+        return ((boxes[0][0] + boxes[0][2]) / 2, (boxes[0][1] + boxes[0][3]) / 2)
+
+    for line in lines:
+        center = line_center(line)
+        if not center:
+            continue
+        cx, cy = center
+        near = []
+        for arrow in arrows:
+            ax = (arrow["box"][0] + arrow["box"][2]) / 2
+            ay = (arrow["box"][1] + arrow["box"][3]) / 2
+            gap = ((ax - cx) ** 2 + (ay - cy) ** 2) ** 0.5
+            if gap <= 0.12:
+                near.append((gap, arrow["heading"]))
+        if near:
+            near.sort()
+            line["flow"] = near[0][1]
+            line["flow_from"] = "arrow"
+
+    # When a line has no arrow, use the FROM / TO connectors that name that line.
+    by_line = {}
+    for connector in connectors or []:
+        tag = str(connector.get("line") or "").strip()
+        if not tag or not connector.get("box"):
+            continue
+        by_line.setdefault(tag, []).append(connector)
+    for line in lines:
+        if line.get("flow"):
+            continue
+        linked = by_line.get(str(line.get("tag") or ""), [])
+        sources = [c for c in linked if c.get("direction") == "source"]
+        dests = [c for c in linked if c.get("direction") == "destination"]
+        if not sources or not dests:
+            continue
+        sx = (sources[0]["box"][0] + sources[0]["box"][2]) / 2
+        dx = (dests[0]["box"][0] + dests[0]["box"][2]) / 2
+        sy = (sources[0]["box"][1] + sources[0]["box"][3]) / 2
+        dy = (dests[0]["box"][1] + dests[0]["box"][3]) / 2
+        if abs(dx - sx) >= abs(dy - sy):
+            line["flow"] = "E" if dx >= sx else "W"
+        else:
+            line["flow"] = "S" if dy >= sy else "N"
+        line["flow_from"] = "connector"
+    return arrows
+
+
 def parse(raw_tokens, image_size):
     W, H = image_size
     tokens = _dedupe_tokens([Tok(t) for t in raw_tokens if t["text"].strip()])
@@ -890,6 +979,10 @@ def parse(raw_tokens, image_size):
             if "boxes" in e:
                 e["boxes"] = [norm_box(b) for b in e["boxes"]]
 
+    token_boxes = [{"text": t.raw, "box": norm_box(t.box())} for t in tokens]
+    arrows = _attach_flow(pipe_lines, token_boxes, connectors)
+    flags["flow_arrows"] = len(arrows)
+
     return {
         "equipment": equipment,
         "instruments": instruments,
@@ -899,5 +992,6 @@ def parse(raw_tokens, image_size):
         "spec_breaks": spec_breaks,
         "flags": flags,
         "token_count": len(tokens),
-        "tokens": [{"text": t.raw, "box": norm_box(t.box())} for t in tokens],
+        "tokens": token_boxes,
+        "flow_arrows": arrows,
     }

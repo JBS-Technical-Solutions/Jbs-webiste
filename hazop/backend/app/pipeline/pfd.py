@@ -580,6 +580,35 @@ def _flow_sentence(start, route):
     return " ".join(sentences)
 
 
+def equipment_conditions(study):
+    """Operating pressure and temperature at each equipment from the PFD heat and material balance."""
+    streams = ((study or {}).get("balance") or {}).get("streams") or {}
+    out = {}
+    for step in (study or {}).get("route") or []:
+        tag = str(step.get("tag") or "").strip().upper()
+        if not tag:
+            continue
+        stream_nos = list(step.get("outlet_streams") or [])
+        if step.get("inlet_stream"):
+            stream_nos.append(step["inlet_stream"])
+        cond = {}
+        for number in stream_nos:
+            data = streams.get(number) or streams.get(str(number).upper()) or streams.get(str(number).lower())
+            if not data:
+                continue
+            if data.get("pressure") and "p_op" not in cond:
+                cond["p_op"] = data["pressure"]
+                cond["p_stream"] = str(number)
+            if data.get("temperature") and "t_op" not in cond:
+                cond["t_op"] = data["temperature"]
+                cond["t_stream"] = str(number)
+            if cond.get("p_op") and cond.get("t_op"):
+                break
+        if cond:
+            out[tag] = cond
+    return out
+
+
 def understand(pages):
     """pages: parse() results, one per PFD sheet, still carrying their text tokens."""
     tokens = []
@@ -592,7 +621,7 @@ def understand(pages):
     start, route, titles = _route(pages, balance, tokens, bands)
     named = {step["name"].lower() for step in route}
     unread = [title["text"] for title in titles if title["text"].lower() not in named]
-    return {
+    study = {
         "start": {"kind": start["kind"], "text": start["text"]},
         "text": _remember(rows),
         "word_count": len(tokens),
@@ -607,6 +636,8 @@ def understand(pages):
         "process_flow": _flow_sentence(start, route),
         "route": route,
     }
+    study["equipment_conditions"] = equipment_conditions(study)
+    return study
 
 
 def note(name, study, pages_read, pages_total):

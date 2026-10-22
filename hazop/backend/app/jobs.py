@@ -756,7 +756,11 @@ def _analyse(job_id):
                 _update(job_id, detail=purpose[:180])
             t0 = time.time()
             study = dict(opts.get("study") or {})
-            study["line_relation"] = list((job.get("_pfd_study") or {}).get("line_relation") or [])
+            pfd_study = job.get("_pfd_study") or {}
+            study["line_relation"] = list(pfd_study.get("line_relation") or [])
+            study["pfd_conditions"] = dict(
+                pfd_study.get("equipment_conditions") or pfd.equipment_conditions(pfd_study)
+            )
 
             def _on_plan(plan, where=""):
                 labels = []
