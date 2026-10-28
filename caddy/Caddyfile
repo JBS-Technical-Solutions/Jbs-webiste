@@ -13,7 +13,7 @@
 	@www expression {host}.startsWith("www.")
 	redir @www https://{labels.1}.{labels.0}{uri} permanent
 
-	# HAZOP Studio: reachable only by URL, never linked from the site.
+	# HAZOP Studio (linked from the main site menu).
 	@hazop path /hazop /hazop/*
 	handle @hazop {
 		request_body {

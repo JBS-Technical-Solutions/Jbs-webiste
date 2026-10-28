@@ -7,9 +7,9 @@ import { AnimatePresence, motion, type Variants } from "motion/react";
 import { useLenis } from "lenis/react";
 import Logo from "./Logo";
 import { easeInOut, easeOut } from "./motion/easing";
-import { contactHref, contactLabel, nav, site } from "@/lib/site";
+import { contactHref, contactLabel, nav, site, type NavItem } from "@/lib/site";
 
-const menuItems = [{ href: "/", label: "Home" }, ...nav, { href: contactHref, label: contactLabel }];
+const menuItems: NavItem[] = [{ href: "/", label: "Home" }, ...nav, { href: contactHref, label: contactLabel }];
 
 const list: Variants = {
   hidden: {},
@@ -103,24 +103,36 @@ export default function Header() {
               <motion.ul variants={list} initial="hidden" animate="visible">
                 {menuItems.map((link, i) => {
                   const active = pathname === link.href;
+                  const className = "group flex items-baseline gap-4 py-1 sm:gap-6";
+                  const label = (
+                    <>
+                      <span className="font-mono text-xs text-muted">0{i + 1}</span>
+                      <span
+                        className={`text-[clamp(2.5rem,7vw,5.5rem)] font-semibold uppercase leading-none tracking-[-0.03em] transition-all duration-500 group-hover:translate-x-3 group-hover:text-accent ${
+                          active ? "text-accent" : ""
+                        }`}
+                      >
+                        {link.label}
+                      </span>
+                    </>
+                  );
                   return (
                     <li key={link.href} className="overflow-hidden">
                       <motion.div variants={item}>
-                        <Link
-                          href={link.href}
-                          onClick={() => setOpen(false)}
-                          aria-current={active ? "page" : undefined}
-                          className="group flex items-baseline gap-4 py-1 sm:gap-6"
-                        >
-                          <span className="font-mono text-xs text-muted">0{i + 1}</span>
-                          <span
-                            className={`text-[clamp(2.5rem,7vw,5.5rem)] font-semibold uppercase leading-none tracking-[-0.03em] transition-all duration-500 group-hover:translate-x-3 group-hover:text-accent ${
-                              active ? "text-accent" : ""
-                            }`}
+                        {link.external ? (
+                          <a href={link.href} onClick={() => setOpen(false)} className={className}>
+                            {label}
+                          </a>
+                        ) : (
+                          <Link
+                            href={link.href}
+                            onClick={() => setOpen(false)}
+                            aria-current={active ? "page" : undefined}
+                            className={className}
                           >
-                            {link.label}
-                          </span>
-                        </Link>
+                            {label}
+                          </Link>
+                        )}
                       </motion.div>
                     </li>
                   );

@@ -6,9 +6,17 @@ export const site = {
   linkedin: "https://www.linkedin.com/company/jbs-technical-solutions/",
 };
 
-export const nav = [
+export type NavItem = {
+  href: string;
+  label: string;
+  /** Full page load — used for apps served outside the main Next.js app (e.g. HAZOP Studio). */
+  external?: boolean;
+};
+
+export const nav: NavItem[] = [
   { href: "/about", label: "About" },
   { href: "/digital-twins", label: "Digital Twins" },
+  { href: "/hazop", label: "HAZOP", external: true },
 ];
 
 export const contactHref = "/contact";
