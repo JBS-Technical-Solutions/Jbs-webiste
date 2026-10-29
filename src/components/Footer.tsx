@@ -19,9 +19,15 @@ export default function Footer() {
           <ul className="mt-5 space-y-2.5 text-[15px]">
             {nav.map((item) => (
               <li key={item.href}>
-                <Link href={item.href} className="transition-colors hover:text-accent-deep">
-                  {item.label}
-                </Link>
+                {item.external ? (
+                  <a href={item.href} className="transition-colors hover:text-accent-deep">
+                    {item.label}
+                  </a>
+                ) : (
+                  <Link href={item.href} className="transition-colors hover:text-accent-deep">
+                    {item.label}
+                  </Link>
+                )}
               </li>
             ))}
             <li>
