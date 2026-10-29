@@ -246,6 +246,9 @@ def _is_isa_letters(s):
 
 def _instrument_category(letters):
     rest = letters[1:]
+    # API 14C flow safety valve = check valve. Not a flow control valve (FV).
+    if letters == "FSV" or letters.startswith("FSV"):
+        return "safety"
     if letters in ("PSV", "PSE", "PZV", "PRV") or (letters[:1] == "P" and letters.endswith("SV")):
         return "relief"
     if rest.startswith("S") and any(m in rest for m in ("HH", "LL")):
@@ -857,69 +860,105 @@ def _parse_spec_breaks(tokens, lines):
     return out
 
 
-# Flow arrows drawn on the pipe. OCR may keep the glyph or read it as >, <, ->, <-.
-_ARROW_EAST = {"→", "⇒", "▶", "▷", "►", "->", "=>", ">", "»"}
-_ARROW_WEST = {"←", "⇐", "◀", "◁", "◄", "<-", "<=", "<", "«"}
-_ARROW_NORTH = {"↑", "⇑", "▲", "△", "^"}
-_ARROW_SOUTH = {"↓", "⇓", "▼", "▽", "v", "V"}
+# Flow arrows drawn on the pipe. OCR may keep the glyph or misread it as >, <, >>, etc.
+_ARROW_EAST = {"→", "⇒", "⟶", "➔", "➜", "➝", "➞", "▶", "▷", "►", "▸", "▻", "->", "=>", ">>", ">", "»", "›"}
+_ARROW_WEST = {"←", "⇐", "⟵", "⬅", "◀", "◁", "◄", "◂", "◅", "<-", "<=", "<<", "<", "«", "‹"}
+_ARROW_NORTH = {"↑", "⇑", "⬆", "▲", "△", "▴", "▵", "^"}
+_ARROW_SOUTH = {"↓", "⇓", "⬇", "▼", "▽", "▾", "▿"}
+_ARROW_TOKEN = re.compile(
+    r"^(?:FLOW|FL)?\s*(?:[-=]{0,2}>+|<+[-=]{0,2}|→+|←+|⇒|⇐|▶|◀|►|◄)$",
+    re.I,
+)
 
 
 def _arrow_heading(text):
     """Compass heading of a flow arrow token, or None when the text is not an arrow."""
     raw = str(text or "").strip()
-    if not raw:
+    if not raw or len(raw) > 12:
         return None
+    # Lone V is a valve code letter, not a south arrow.
     if raw in _ARROW_EAST:
         return "E"
     if raw in _ARROW_WEST:
         return "W"
     if raw in _ARROW_NORTH:
         return "N"
-    if raw in _ARROW_SOUTH and raw not in {"V"}:  # lone V is usually a valve, not an arrow
+    if raw in _ARROW_SOUTH:
         return "S"
-    if re.fullmatch(r"(FLOW|FL)?\s*[->⇒→]+", raw, re.I):
-        return "E"
-    if re.fullmatch(r"(FLOW|FL)?\s*[<-⇐←]+", raw, re.I):
+    if _ARROW_TOKEN.fullmatch(raw):
+        if any(ch in raw for ch in "<«‹←⇐◀"):
+            return "W"
+        if any(ch in raw for ch in ">»›→⇒▶"):
+            return "E"
+    # OCR sometimes glues the arrow to a short neighbour: "A→", ">FG", "←8".
+    if re.fullmatch(r".{0,3}[→⇒▶►>]{1,3}.{0,2}", raw) and not re.search(r"[A-Z]{2,}-\d", raw, re.I):
+        if sum(raw.count(ch) for ch in "<«←") == 0:
+            return "E"
+    if re.fullmatch(r".{0,2}[←⇐◀◄<]{1,3}.{0,3}", raw) and not re.search(r"[A-Z]{2,}-\d", raw, re.I):
         return "W"
     return None
 
 
-def _attach_flow(lines, tokens, connectors):
-    """Put the flow direction of each pipe from the arrows drawn beside it, else FROM→TO."""
+def _box_center(box):
+    return ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+
+
+def _link_connector_equipment(connectors, equipment):
+    """When a FROM/TO note names an equipment tag, remember that tag on the connector."""
+    tags = [str(eq.get("tag") or "").upper() for eq in equipment or [] if eq.get("tag")]
+    for connector in connectors or []:
+        desc = str(connector.get("description") or "")
+        compact = re.sub(r"\s+", "", desc.upper())
+        found = None
+        match = EQUIP_RE.search(desc.upper().replace(" ", ""))
+        if match:
+            found = f"{match.group(1)}-{match.group(2)}"
+        if not found:
+            for tag in tags:
+                if tag and tag.replace("-", "") in compact.replace("-", ""):
+                    found = tag
+                    break
+        if found:
+            connector["equipment"] = found
+
+
+def _attach_flow(lines, tokens, connectors, equipment=None):
+    """Flow on each pipe from the arrow drawn on it, else FROM→TO / named equipment."""
+    _link_connector_equipment(connectors, equipment)
     arrows = []
     for token in tokens:
-        heading = _arrow_heading(token.text if hasattr(token, "text") else token.get("text"))
+        text = token.text if hasattr(token, "text") else token.get("text")
+        heading = _arrow_heading(text)
         if not heading:
             continue
         box = token.box() if hasattr(token, "box") else token.get("box")
         if not box:
             continue
-        arrows.append({"heading": heading, "box": box})
+        arrows.append({"heading": heading, "box": box, "text": str(text or "")})
 
-    def line_center(line):
+    def line_points(line):
         boxes = line.get("boxes") or ([line["box"]] if line.get("box") else [])
-        if not boxes:
-            return None
-        return ((boxes[0][0] + boxes[0][2]) / 2, (boxes[0][1] + boxes[0][3]) / 2)
+        return [_box_center(b) for b in boxes if b]
 
+    # 1) Arrow drawn beside any segment of the line wins.
     for line in lines:
-        center = line_center(line)
-        if not center:
+        points = line_points(line)
+        if not points:
             continue
-        cx, cy = center
         near = []
         for arrow in arrows:
-            ax = (arrow["box"][0] + arrow["box"][2]) / 2
-            ay = (arrow["box"][1] + arrow["box"][3]) / 2
-            gap = ((ax - cx) ** 2 + (ay - cy) ** 2) ** 0.5
-            if gap <= 0.12:
+            ax, ay = _box_center(arrow["box"])
+            gap = min(((ax - px) ** 2 + (ay - py) ** 2) ** 0.5 for px, py in points)
+            # Arrows sit on or just beside the pipe; keep the search tight so a far arrow
+            # on another branch does not flip this line.
+            if gap <= 0.09:
                 near.append((gap, arrow["heading"]))
         if near:
             near.sort()
             line["flow"] = near[0][1]
             line["flow_from"] = "arrow"
 
-    # When a line has no arrow, use the FROM / TO connectors that name that line.
+    # 2) FROM / TO connectors that name this line: fluid runs FROM → TO.
     by_line = {}
     for connector in connectors or []:
         tag = str(connector.get("line") or "").strip()
@@ -934,16 +973,97 @@ def _attach_flow(lines, tokens, connectors):
         dests = [c for c in linked if c.get("direction") == "destination"]
         if not sources or not dests:
             continue
-        sx = (sources[0]["box"][0] + sources[0]["box"][2]) / 2
-        dx = (dests[0]["box"][0] + dests[0]["box"][2]) / 2
-        sy = (sources[0]["box"][1] + sources[0]["box"][3]) / 2
-        dy = (dests[0]["box"][1] + dests[0]["box"][3]) / 2
+        sx, sy = _box_center(sources[0]["box"])
+        dx, dy = _box_center(dests[0]["box"])
         if abs(dx - sx) >= abs(dy - sy):
             line["flow"] = "E" if dx >= sx else "W"
         else:
             line["flow"] = "S" if dy >= sy else "N"
         line["flow_from"] = "connector"
+
+    # 3) A FROM note that names equipment on this sheet: flow leaves that equipment along the line.
+    tag_box = {str(eq.get("tag") or "").upper(): eq.get("box") for eq in equipment or [] if eq.get("tag") and eq.get("box")}
+    for line in lines:
+        if line.get("flow"):
+            continue
+        points = line_points(line)
+        if not points:
+            continue
+        lx = sum(p[0] for p in points) / len(points)
+        ly = sum(p[1] for p in points) / len(points)
+        best = None
+        for connector in connectors or []:
+            eq_tag = str(connector.get("equipment") or "").upper()
+            eq_box = tag_box.get(eq_tag)
+            if not eq_box or not connector.get("box"):
+                continue
+            # Connector must sit on this line's run.
+            cx, cy = _box_center(connector["box"])
+            if min(((cx - px) ** 2 + (cy - py) ** 2) ** 0.5 for px, py in points) > 0.14:
+                continue
+            ex, ey = _box_center(eq_box)
+            if connector.get("direction") == "source":
+                # Fluid comes from the named equipment into the sheet → flow runs equipment → connector.
+                heading = _heading_from_points(ex, ey, lx, ly)
+            else:
+                # TO named equipment → flow runs connector → equipment.
+                heading = _heading_from_points(lx, ly, ex, ey)
+            gap = ((ex - lx) ** 2 + (ey - ly) ** 2) ** 0.5
+            if heading and (best is None or gap < best[0]):
+                best = (gap, heading)
+        if best:
+            line["flow"] = best[1]
+            line["flow_from"] = "equipment"
+
+    # 4) Two equipment tags sit on opposite ends of the line: arrow between them, else left→right.
+    large = [eq for eq in equipment or []
+             if eq.get("box") and not eq.get("offpage") and eq.get("kind") not in ("panel", "package")]
+    for line in lines:
+        if line.get("flow"):
+            continue
+        points = line_points(line)
+        if not points or len(large) < 2:
+            continue
+        lx = sum(p[0] for p in points) / len(points)
+        ly = sum(p[1] for p in points) / len(points)
+        ranked = sorted(
+            large,
+            key=lambda eq: min((( _box_center(eq["box"])[0] - px) ** 2 + (_box_center(eq["box"])[1] - py) ** 2) ** 0.5
+                               for px, py in points),
+        )
+        a, b = ranked[0], ranked[1]
+        ax, ay = _box_center(a["box"])
+        bx, by = _box_center(b["box"])
+        # Both must actually sit near this line.
+        if min(((ax - px) ** 2 + (ay - py) ** 2) ** 0.5 for px, py in points) > 0.18:
+            continue
+        if min(((bx - px) ** 2 + (by - py) ** 2) ** 0.5 for px, py in points) > 0.18:
+            continue
+        # Prefer an arrow that lies between the two equipment boxes.
+        between = []
+        for arrow in arrows:
+            ox, oy = _box_center(arrow["box"])
+            if min(ax, bx) - 0.04 <= ox <= max(ax, bx) + 0.04 and min(ay, by) - 0.08 <= oy <= max(ay, by) + 0.08:
+                between.append(arrow)
+        if between:
+            line["flow"] = between[0]["heading"]
+            line["flow_from"] = "arrow"
+            continue
+        heading = _heading_from_points(ax, ay, bx, by)
+        if heading:
+            # Without an arrow, do not guess — wait for a clearer FROM/TO. Skip.
+            pass
     return arrows
+
+
+def _heading_from_points(x0, y0, x1, y1):
+    """Compass heading from point 0 toward point 1."""
+    dx, dy = x1 - x0, y1 - y0
+    if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+        return None
+    if abs(dx) >= abs(dy):
+        return "E" if dx >= 0 else "W"
+    return "S" if dy >= 0 else "N"
 
 
 def parse(raw_tokens, image_size):
@@ -980,8 +1100,8 @@ def parse(raw_tokens, image_size):
                 e["boxes"] = [norm_box(b) for b in e["boxes"]]
 
     token_boxes = [{"text": t.raw, "box": norm_box(t.box())} for t in tokens]
-    arrows = _attach_flow(pipe_lines, token_boxes, connectors)
-    flags["flow_arrows"] = len(arrows)
+    arrows = _attach_flow(pipe_lines, token_boxes, connectors, equipment)
+    flags["flow_arrows"] = sum(1 for line in pipe_lines if line.get("flow_from") == "arrow")
 
     return {
         "equipment": equipment,

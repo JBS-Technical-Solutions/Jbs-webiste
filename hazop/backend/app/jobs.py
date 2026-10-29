@@ -20,16 +20,16 @@ from . import documents
 from . import knowledge as kb
 from . import risk
 from .config import CACHE_DIR, JOB_TTL_HOURS, JOBS_DIR, MAX_PID_PAGES, RENDER_DPI
-from .pipeline import ai, ocr, parse, pfd, render, rules
+from .pipeline import ai, ocr, parse, pfd, render, rules, sequence
 
 STAGES = [
     {"id": "upload", "label": "Upload received"},
     {"id": "verify", "label": "Reading the piping specification and the risk matrix"},
-    {"id": "render", "label": "Reading the PFD: equipment names and the process flow"},
+    {"id": "render", "label": "Step 1 — Read the PFD: system purpose and every equipment / component"},
     {"id": "ocr", "label": "Reading the P&ID from left to right"},
-    {"id": "parse", "label": "Matching each PFD stream to its P&ID line"},
+    {"id": "parse", "label": "Step 2 — Compare P&ID with PFD: each PFD stream to its P&ID line number"},
     {"id": "nodes", "label": "Confirming HAZOP nodes"},
-    {"id": "analyse", "label": "Writing causes left to right and consequences from the matched lines"},
+    {"id": "analyse", "label": "Steps 3–5 — Ops map, piping design, non-steady lines, then write causes"},
     {"id": "done", "label": "Worksheet ready"},
 ]
 
@@ -382,26 +382,40 @@ def _learn_pfd(job_id, info):
             pages.append(page_ext)
     finally:
         drawing.close()
+    _update(job_id, detail=sequence.STEPS[0]["rule"])
     _update(job_id, detail="Reading the equipment names at the top of the PFD, then following how the process proceeds")
-    study = pfd.understand(pages)
+    study = sequence.apply_step1(pfd.understand(pages))
     tags = [step["tag"] for step in study["route"] if step.get("tag")]
+    _update(job_id, detail=sequence.step1_note(study)[:180])
     return {
         "name": info["name"],
         "pages": len(pages),
         "tags": tags,
         "study": study,
         "note": pfd.note(info["name"], study, len(pages), total),
+        "step1": sequence.step1_note(study),
     }
 
 
 def _purpose_from_docs(pfd):
-    """Why the P&ID exists, from the piping specification, PFD and risk matrix, before the drawing is opened."""
+    """Step 1: understand system and equipment purpose from the PFD before the P&ID is opened."""
     study = (pfd or {}).get("study") or {}
+    if study and not study.get("system_purpose"):
+        study = sequence.apply_step1(study)
+        if isinstance(pfd, dict) and pfd.get("study") is not None:
+            pfd["study"] = study
     route = [step["tag"] for step in study.get("route") or [] if step.get("tag")]
     focus = ", ".join(route[:6]) if route else (
         ", ".join((pfd or {}).get("tags") or []) or "the process equipment learned from the PFD")
+    system = (study.get("system_purpose") or "").strip()
+    purposes = study.get("equipment_purposes") or []
+    equip_note = ""
+    if purposes:
+        shown = "; ".join(item["purpose"] for item in purposes[:5])
+        more = f" (+{len(purposes) - 5} more)" if len(purposes) > 5 else ""
+        equip_note = f" Equipment / component purposes: {shown}{more}."
     flow_text = ((study.get("process_flow") or "").strip())
-    flow = f" {flow_text}" if flow_text else (
+    flow = f" {system or flow_text}" if (system or flow_text) else (
         f" The PFD was read from its inlet and the stream was followed through {focus}." if route else "")
     classes = list(kb.specs())
     class_note = ""
@@ -416,9 +430,19 @@ def _purpose_from_docs(pfd):
         matrix_note = f" Consequences are ranked on the {nc} x {nl} risk matrix '{matrix['source']}'."
     except risk.MatrixRequired:
         matrix_note = ""
+    step1 = sequence.STEPS[0]["rule"]
+    if not pfd:
+        return (
+            f"Step 1 could not use a PFD (none uploaded). {step1} "
+            "Piping specification and risk matrix were still read before the P&ID."
+            f"{class_note}{matrix_note}"
+        )
     return (
+        f"Step 1 — {step1} "
         "Before the P&ID was opened, the piping specification, the PFD and the risk matrix were read and learned. "
-        f"The purpose of the P&ID is the detailed piping, instruments and valves for {focus}.{flow}{class_note}{matrix_note}"
+        f"The purpose of the system and of its equipment / components was taken from the PFD "
+        f"(detailed piping, instruments and valves for {focus})."
+        f"{flow}{equip_note}{class_note}{matrix_note}"
     )
 
 
@@ -477,7 +501,7 @@ def _extract(job_id):
                 _update(job_id, detail=matrix_note[:180])
             purpose = _purpose_from_docs(pfd_learned)
             _update(job_id, detail=purpose[:180])
-            _update(job_id, detail="Purpose understood. Reading the P&ID.")
+            _update(job_id, detail="Step 1 complete — system and equipment purpose understood from the PFD. Reading the P&ID.")
             _update(job_id, detail="Counting pages in each P&ID")
             t0 = time.time()
             inventory = []
@@ -621,14 +645,66 @@ def _extract(job_id):
                 )
             purpose = _purpose_text(ext, pfd_learned, purpose)
             if pfd_learned and pfd_learned.get("study"):
+                _stage(job_id, "parse")
+                _update(job_id, detail=sequence.STEPS[1]["rule"])
                 sheets = [(item["page"], item["ext"]) for item in pending if item.get("ext")] if multi else [(0, ext)]
                 linked = pfd.relate(pfd_learned["study"], sheets)
-                pfd_learned["study"]["line_relation"] = linked["matches"]
-                pfd_learned["relation_note"] = linked["note"]
-                _stage(job_id, "parse")
-                _update(job_id, detail="P&ID read. PFD streams are matched to the P&ID lines that join the same equipment.")
+                pfd_learned["study"] = sequence.apply_step2(pfd_learned["study"], linked)
+                pfd_learned["relation_note"] = pfd_learned["study"].get("relation_note") or linked.get("note") or ""
+                pfd_learned["step2"] = sequence.step2_note(pfd_learned["study"])
+                _update(job_id, detail=sequence.step2_note(pfd_learned["study"])[:180])
+                _update(job_id, detail=sequence.STEPS[2]["rule"])
+                pfd_learned["study"] = sequence.apply_step3(pfd_learned["study"], sheets)
+                # Stamp the primary extraction used for single-sheet jobs.
+                if not multi and sheets:
+                    _, primary = sheets[0]
+                    for line in primary.get("lines") or []:
+                        ops = (pfd_learned["study"].get("line_operating") or {}).get(str(line.get("tag") or ""))
+                        if not ops:
+                            continue
+                        if ops.get("p_op") is not None:
+                            line["p_op"] = ops["p_op"]
+                        if ops.get("t_op") is not None:
+                            line["t_op"] = ops["t_op"]
+                        line["pfd_stream"] = ops.get("pfd_stream")
+                pfd_learned["step3"] = sequence.step3_note(pfd_learned["study"])
+                _update(job_id, detail=sequence.step3_note(pfd_learned["study"])[:180])
+                _update(job_id, detail=sequence.STEPS[3]["rule"])
+                pfd_learned["study"] = sequence.apply_step4(pfd_learned["study"], sheets)
+                if not multi:
+                    ext = sheets[0][1] if sheets else ext
+                pfd_learned["step4"] = sequence.step4_note(pfd_learned["study"])
+                _update(job_id, detail=sequence.step4_note(pfd_learned["study"])[:180])
+                _update(job_id, detail=sequence.STEPS[4]["rule"])
+                pfd_learned["study"] = sequence.apply_step5(pfd_learned["study"], sheets)
+                if not multi:
+                    ext = sheets[0][1] if sheets else ext
+                pfd_learned["step5"] = sequence.step5_note(pfd_learned["study"])
+                _update(job_id, detail=sequence.step5_note(pfd_learned["study"])[:180])
             else:
-                _update(job_id, detail="P&ID read. Nodes will be studied one at a time, in node-number order.")
+                # Still design segments (Step 4) and mark non-steady lines (Step 5) without a PFD.
+                sheets = [(item["page"], item["ext"]) for item in pending if item.get("ext")] if multi else [(0, ext)]
+                _update(job_id, detail=sequence.STEPS[3]["rule"])
+                bare = sequence.apply_step4({"line_operating": {}}, sheets)
+                job["_line_design"] = bare.get("line_design") or {}
+                _update(job_id, detail=sequence.step4_note(bare)[:180])
+                _update(job_id, detail=sequence.STEPS[4]["rule"])
+                bare = sequence.apply_step5(bare, sheets)
+                job["_non_steady"] = {
+                    "non_steady_segments": bare.get("non_steady_segments") or [],
+                    "non_steady_by_role": bare.get("non_steady_by_role") or {},
+                    "nc_isolation_valves": bare.get("nc_isolation_valves") or [],
+                }
+                if not multi:
+                    ext = sheets[0][1] if sheets else ext
+                _update(job_id, detail=sequence.step5_note(bare)[:180])
+                _update(
+                    job_id,
+                    detail=(
+                        "Step 2–3 skipped (no PFD). Steps 4–5 applied: piping-spec design parameters "
+                        "and drain/bypass/vent/flare identification."
+                    ),
+                )
 
         warnings = []
         if total > count:
@@ -757,10 +833,57 @@ def _analyse(job_id):
             t0 = time.time()
             study = dict(opts.get("study") or {})
             pfd_study = job.get("_pfd_study") or {}
+            if pfd_study and not pfd_study.get("system_purpose"):
+                pfd_study = sequence.apply_step1(pfd_study)
+                job["_pfd_study"] = pfd_study
             study["line_relation"] = list(pfd_study.get("line_relation") or [])
-            study["pfd_conditions"] = dict(
-                pfd_study.get("equipment_conditions") or pfd.equipment_conditions(pfd_study)
+            study["stream_line_map"] = list(pfd_study.get("stream_line_map") or [])
+            study["line_operating"] = dict(pfd_study.get("line_operating") or {})
+            study["equipment_operating"] = dict(pfd_study.get("equipment_operating") or {})
+            study["line_design"] = dict(
+                pfd_study.get("line_design") or job.get("_line_design") or {}
             )
+            non_steady = job.get("_non_steady") or {}
+            study["non_steady_segments"] = list(
+                pfd_study.get("non_steady_segments") or non_steady.get("non_steady_segments") or []
+            )
+            study["non_steady_by_role"] = dict(
+                pfd_study.get("non_steady_by_role") or non_steady.get("non_steady_by_role") or {}
+            )
+            study["nc_isolation_valves"] = list(
+                pfd_study.get("nc_isolation_valves") or non_steady.get("nc_isolation_valves") or []
+            )
+            study["pfd_conditions"] = dict(
+                pfd_study.get("equipment_conditions")
+                or pfd_study.get("equipment_operating")
+                or pfd.equipment_conditions(pfd_study)
+            )
+            study["system_purpose"] = pfd_study.get("system_purpose") or ""
+            study["equipment_purposes"] = list(pfd_study.get("equipment_purposes") or [])
+            if study.get("non_steady_segments") is not None and (
+                    study.get("non_steady_segments") or study.get("non_steady_by_role") is not None):
+                _update(job_id, detail=sequence.step5_note({
+                    "non_steady_segments": study["non_steady_segments"],
+                    "non_steady_by_role": study["non_steady_by_role"],
+                    "nc_isolation_valves": study["nc_isolation_valves"],
+                })[:180])
+            elif study.get("line_design"):
+                _update(job_id, detail=sequence.step4_note({
+                    **pfd_study,
+                    "line_design": study["line_design"],
+                    "piping_segments_designed": len(study["line_design"]),
+                    "piping_specs_known": sum(1 for d in study["line_design"].values() if d.get("spec_known")),
+                    "piping_specs_unknown": sum(
+                        1 for d in study["line_design"].values()
+                        if d.get("spec") and not d.get("spec_known")
+                    ),
+                })[:180])
+            elif study.get("line_operating") or study.get("equipment_operating"):
+                _update(job_id, detail=sequence.step3_note(pfd_study)[:180])
+            elif study.get("stream_line_map"):
+                _update(job_id, detail=sequence.step2_note(pfd_study)[:180])
+            elif purpose:
+                _update(job_id, detail="Using Step 1 PFD purpose while writing the worksheet.")
 
             def _on_plan(plan, where=""):
                 labels = []

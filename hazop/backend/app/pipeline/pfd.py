@@ -644,12 +644,21 @@ def note(name, study, pages_read, pages_total):
     """A short worksheet note. The full reading stays on the study for the later steps."""
     start = study["start"]["text"]
     where = f"the inlet ({start})" if study["start"]["kind"] == "inlet" else start
-    parts = []
-    flow = (study.get("process_flow") or "").strip()
-    if flow:
-        parts.append(flow + " ")
+    parts = [
+        "Step 1 — Read the PFD and understand the purpose of the system and of every equipment / component. "
+    ]
+    system = (study.get("system_purpose") or "").strip()
+    if system:
+        parts.append(system + " ")
     else:
-        parts.append(f"The PFD '{name}' starts at {where}. ")
+        flow = (study.get("process_flow") or "").strip()
+        if flow:
+            parts.append(flow + " ")
+        else:
+            parts.append(f"The PFD '{name}' starts at {where}. ")
+    n_eq = len(study.get("equipment_purposes") or study.get("equipment") or [])
+    if n_eq:
+        parts.append(f" Purpose understood for {n_eq} equipment / component(s) on the PFD.")
     balance = study["balance"]
     if balance["found"]:
         parts.append(
@@ -792,7 +801,11 @@ def _beside(line, equipment, upstream):
 
 
 def relate(study, sheets):
-    """Say which PFD stream is which P&ID line, using the equipment both drawings name."""
+    """Step 2: compare P&ID with PFD — which PFD stream is which P&ID line number.
+
+    Uses equipment names shared by both drawings, stream numbers written beside
+    P&ID lines, and connector text that names the same places as the PFD.
+    """
     equipment, lines, connectors, tokens = _collect(sheets)
     segments = _stream_segments(study)
     ranked = []
