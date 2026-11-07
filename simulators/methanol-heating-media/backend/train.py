@@ -98,7 +98,8 @@ def main():
 
     print("PINN...")
     # New PINN notebook already uses clip_grad_norm=1.0, finite-loss skip, and EPOCHS=200.
-    pinn_ns = run_notebook(PINN_NB, skip=("input(", "MAE PINN"))
+    # Do not skip the eval cell (it mentions "MAE PINN only") — we need Y_true / Y_hyb for R².
+    pinn_ns = run_notebook(PINN_NB, skip=("input(", "run_digital_twin_interactive"))
     if "residual_model" not in pinn_ns:
         raise RuntimeError("PINN notebook did not produce residual_model")
     model = pinn_ns["model"]
@@ -156,9 +157,17 @@ def main():
     website = pinn_namespace(state, refs, pinn_ns["residual_model"])
     # Prefer hybrid scores from the notebook eval when present.
     if "Y_hyb" in pinn_ns and "Y_true" in pinn_ns:
-        pinn_test = scores(pinn_ns["Y_true"], pinn_ns["Y_hyb"])
+        y_true = np.asarray(pinn_ns["Y_true"], float)
+        y_hyb = np.asarray(pinn_ns["Y_hyb"], float)
+        if y_true.ndim == 1 or len(y_true) < 2:
+            raise RuntimeError("PINN notebook eval produced too few scored rows")
+        pinn_test = scores(y_true, y_hyb)
     else:
-        pinn_test = scores(test_df[OUTPUT_COLS].to_numpy(), predict_rows(website, test_df))
+        # Fallback: score the served twin on a held-out slice.
+        eval_df = test_df.head(min(120, len(test_df)))
+        pinn_test = scores(eval_df[OUTPUT_COLS].to_numpy(), predict_rows(website, eval_df))
+    if all(v["r2"] is None for v in pinn_test.values()):
+        raise RuntimeError("PINN R² scores are all missing — eval failed")
     pinn = {
         "selected": (
             f"ReactorPINN + residual, {int(pinn_ns['N_TRAIN_CASES'])} cases × "
