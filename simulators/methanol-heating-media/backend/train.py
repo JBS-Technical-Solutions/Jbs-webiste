@@ -25,17 +25,22 @@ warnings.filterwarnings("ignore")
 ARTIFACTS = Path(__file__).resolve().parent / "artifacts"
 
 
+def _finite_or_none(value: float) -> float | None:
+    value = float(value)
+    return value if np.isfinite(value) else None
+
+
 def scores(y_true, y_pred) -> dict:
     y_true, y_pred = np.asarray(y_true, float), np.asarray(y_pred, float)
     out = {}
     for i, c in enumerate(OUTPUT_COLS):
         ok = np.isfinite(y_true[:, i]) & np.isfinite(y_pred[:, i])
         if int(ok.sum()) < 2:
-            out[c] = {"r2": float("nan"), "mae": float("nan")}
+            out[c] = {"r2": None, "mae": None}
         else:
             out[c] = {
-                "r2": float(r2_score(y_true[ok, i], y_pred[ok, i])),
-                "mae": float(mean_absolute_error(y_true[ok, i], y_pred[ok, i])),
+                "r2": _finite_or_none(r2_score(y_true[ok, i], y_pred[ok, i])),
+                "mae": _finite_or_none(mean_absolute_error(y_true[ok, i], y_pred[ok, i])),
             }
     return out
 
@@ -179,7 +184,10 @@ def main():
         "output_ranges": {c: {"min": float(df[c].min()), "max": float(df[c].max())} for c in OUTPUT_COLS},
         "models": {"physics": physics, "serial": serial, "parallel": parallel, "pinn": pinn},
     }
-    (ARTIFACTS / "metrics.json").write_text(json.dumps(info, indent=2, ensure_ascii=False), encoding="utf-8")
+    (ARTIFACTS / "metrics.json").write_text(
+        json.dumps(info, indent=2, ensure_ascii=False, allow_nan=False),
+        encoding="utf-8",
+    )
     print(f"Saved to {ARTIFACTS} in {time.time() - t0:.0f}s")
 
 

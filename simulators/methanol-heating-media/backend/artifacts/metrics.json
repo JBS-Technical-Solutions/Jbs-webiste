@@ -182,36 +182,36 @@
       "selected": "ReactorPINN + residual, 250 cases × 200 epochs",
       "test": {
         "T_0.2m_C": {
-          "r2": NaN,
-          "mae": NaN
+          "r2": null,
+          "mae": null
         },
         "T_0.4m_C": {
-          "r2": NaN,
-          "mae": NaN
+          "r2": null,
+          "mae": null
         },
         "T_0.6m_C": {
-          "r2": NaN,
-          "mae": NaN
+          "r2": null,
+          "mae": null
         },
         "T_0.8m_C": {
-          "r2": NaN,
-          "mae": NaN
+          "r2": null,
+          "mae": null
         },
         "T_1m_C": {
-          "r2": NaN,
-          "mae": NaN
+          "r2": null,
+          "mae": null
         },
         "P_out_bar_g": {
-          "r2": NaN,
-          "mae": NaN
+          "r2": null,
+          "mae": null
         },
         "Q_total_kW": {
-          "r2": NaN,
-          "mae": NaN
+          "r2": null,
+          "mae": null
         },
         "X_overall_pct": {
-          "r2": NaN,
-          "mae": NaN
+          "r2": null,
+          "mae": null
         }
       }
     }

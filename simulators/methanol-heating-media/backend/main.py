@@ -1,6 +1,7 @@
 """FastAPI backend for the JBS methanol heating-media digital twin."""
 
 import json
+import math
 import os
 from pathlib import Path
 from typing import Literal, Optional
@@ -158,9 +159,20 @@ def health():
     return {"status": "ok", "trained_at": INFO["trained_at"], "physics_source": PHYSICS_NB.name}
 
 
+def _json_safe(value):
+    """Replace NaN/Inf so FastAPI/json.dumps never 500 on /info."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 @app.get("/info")
 def info():
-    return INFO
+    return _json_safe(INFO)
 
 
 @app.post("/predict", response_model=TwinOutput)
