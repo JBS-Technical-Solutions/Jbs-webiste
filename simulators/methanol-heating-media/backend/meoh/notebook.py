@@ -61,6 +61,9 @@ def run_notebook(notebook: Path, skip=("input(",), patches: dict[str, str] | Non
 
 def load_definitions(notebook: Path, names: set[str], **preset) -> dict:
     ns = _namespace()
+    # Apply presets first so data-derived constants (e.g. PINN T_BED_HI) survive
+    # when their notebook Assign depends on train_df that is not loaded here.
+    ns.update(preset)
     with _in_notebook_dir(), contextlib.redirect_stdout(io.StringIO()):
         for src in code_cells(notebook):
             for node in ast.parse(src).body:

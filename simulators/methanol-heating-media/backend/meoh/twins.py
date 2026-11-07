@@ -26,11 +26,26 @@ def physics_namespace() -> dict:
 
 
 def serial_namespace(artifact: dict) -> dict:
-    return load_definitions(
+    # Newer Serial notebook: learned kinetics ODE + residual ML (ŷ = clip(y_ode + r̂)).
+    ns = load_definitions(
         SERIAL_NB,
-        SHARED | {"concentrations", "reactor_model", "simulate", "rate_learned", "predict_outputs"},
+        SHARED
+        | {
+            "concentrations",
+            "reactor_model",
+            "simulate",
+            "rate_learned",
+            "outputs_vector",
+            "predict_ode_only",
+            "clip_hybrid",
+            "predict_outputs",
+        },
         kinetics_model=artifact["kinetics_model"],
+        residual_model=artifact["residual_model"],
     )
+    ns["kinetics_model"] = artifact["kinetics_model"]
+    ns["residual_model"] = artifact["residual_model"]
+    return ns
 
 
 def parallel_namespace(artifact: dict) -> dict:
@@ -41,12 +56,25 @@ def parallel_namespace(artifact: dict) -> dict:
     )
 
 
-def pinn_namespace(state_dict: dict, refs: dict) -> dict:
-    ns = load_definitions(PINN_NB, {"ReactorPINN", "predict_outputs"}, **refs)
+def pinn_namespace(state_dict: dict, refs: dict, residual_model) -> dict:
+    # Newer PINN notebook: network + residual ML (ŷ = clip(y_pinn + r̂)).
+    ns = load_definitions(
+        PINN_NB,
+        {
+            "ReactorPINN",
+            "predict_pinn_only",
+            "clip_hybrid",
+            "_isotonic_rising",
+            "predict_outputs",
+        },
+        residual_model=residual_model,
+        **refs,
+    )
     model = ns["ReactorPINN"]()
     model.load_state_dict(state_dict)
     model.eval()
     ns["model"] = model
+    ns["residual_model"] = residual_model
     return ns
 
 
@@ -57,7 +85,14 @@ class Twins:
         self.serial = serial_namespace(joblib.load(artifacts / "serial.joblib"))
         self.parallel = parallel_namespace(joblib.load(artifacts / "parallel.joblib"))
         refs = json.loads((artifacts / "pinn_refs.json").read_text(encoding="utf-8"))
-        self.pinn = pinn_namespace(torch.load(artifacts / "pinn.pt", map_location="cpu"), refs)
+        residual = joblib.load(artifacts / "pinn_residual.joblib")
+        if isinstance(residual, dict):
+            residual = residual["residual_model"]
+        try:
+            state = torch.load(artifacts / "pinn.pt", map_location="cpu", weights_only=True)
+        except TypeError:
+            state = torch.load(artifacts / "pinn.pt", map_location="cpu")
+        self.pinn = pinn_namespace(state, refs, residual)
 
     def predict(self, model: str, T_in_C: float, P_in_bar_g: float, T_heat_C: float, F_in_kgmole_h: float) -> dict:
         ns = getattr(self, model)

@@ -14,7 +14,14 @@ from meoh.notebook import PARALLEL_NB, PHYSICS_NB, PINN_NB, SERIAL_NB
 from meoh.twins import OUTPUT_COLS, Twins
 
 ARTIFACTS = Path(__file__).resolve().parent / "artifacts"
-REQUIRED = ["serial.joblib", "parallel.joblib", "pinn.pt", "pinn_refs.json", "metrics.json"]
+REQUIRED = [
+    "serial.joblib",
+    "parallel.joblib",
+    "pinn.pt",
+    "pinn_refs.json",
+    "pinn_residual.joblib",
+    "metrics.json",
+]
 
 missing = [f for f in REQUIRED if not (ARTIFACTS / f).exists()]
 if missing:

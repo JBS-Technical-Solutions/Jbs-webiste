@@ -23,10 +23,10 @@ import "../meoh/meoh.css";
 
 const MODELS: Record<ModelKind, { title: string; blurb: string }> = {
   physics: { title: "Physics", blurb: "LHHW kinetics → plug-flow ODEs → axial profile" },
-  serial: { title: "Serial Hybrid", blurb: "Physics ODEs with a learned reaction rate" },
+  serial: { title: "Serial Hybrid", blurb: "Learned kinetics ODE plus an ML residual" },
   parallel: { title: "Parallel Hybrid", blurb: "Physics baseline plus an ML residual" },
-  pinn: { title: "PINN", blurb: "Physics-Informed Neural Network" },
-};
+  pinn: { title: "PINN", blurb: "Physics-informed net plus an ML residual" },
+}
 
 const histogramVariables = (info: BackendInfo | null): HistogramVariable<TwinOutput>[] => [
   {

@@ -60,11 +60,20 @@ def main():
 
     print("Serial hybrid...")
     serial_ns = run_notebook(SERIAL_NB)
-    joblib.dump({"kinetics_model": serial_ns["kinetics_model"]}, ARTIFACTS / "serial.joblib")
+    if "residual_model" not in serial_ns:
+        raise RuntimeError("Serial notebook did not produce residual_model")
+    joblib.dump(
+        {
+            "kinetics_model": serial_ns["kinetics_model"],
+            "residual_model": serial_ns["residual_model"],
+        },
+        ARTIFACTS / "serial.joblib",
+    )
     df, test_df = serial_ns["df"], serial_ns["test_df"]
+    y_serial = serial_ns["Y_hyb"] if "Y_hyb" in serial_ns else serial_ns["Y_learn"]
     serial = {
-        "selected": "MLP reaction rate inside the physics ODE",
-        "test": scores(serial_ns["Y_excel"], serial_ns["Y_learn"]),
+        "selected": "Learned kinetics ODE + HistGradientBoosting residual",
+        "test": scores(serial_ns["Y_excel"], y_serial),
     }
 
     print("Physics...")
@@ -83,32 +92,74 @@ def main():
     }
 
     print("PINN...")
-    pinn_ns = run_notebook(
-        PINN_NB,
-        skip=("input(", "MAE PINN"),
-        patches={
-            "optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)  # Adam optimizer with learning rate 0.001":
-            "optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)",
-            "loss_batch.backward()  # backpropagate\n        torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)  # gradient clipping\n        optimizer.step()  # update weights":
-            "loss_batch.backward()\n        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)\n"
-            "        if torch.isfinite(loss_batch).item():\n"
-            "            optimizer.step()\n"
-            "        else:\n"
-            "            optimizer.zero_grad(set_to_none=True)",
-        },
-    )
+    # New PINN notebook already uses clip_grad_norm=1.0, finite-loss skip, and EPOCHS=200.
+    pinn_ns = run_notebook(PINN_NB, skip=("input(", "MAE PINN"))
+    if "residual_model" not in pinn_ns:
+        raise RuntimeError("PINN notebook did not produce residual_model")
     model = pinn_ns["model"]
     model.eval()
-    refs = {k: float(pinn_ns[k]) for k in ("T_REF", "P_REF_BAR", "F_REF", "T_HEAT_REF", "Q_REF")}
+    refs = {}
+    for k in (
+        "T_REF",
+        "P_REF_BAR",
+        "F_REF",
+        "T_HEAT_REF",
+        "Q_REF",
+        "T_BED_HI",
+        "T_BED_LO",
+        "T_DATA_SCALE",
+        "Q_MAX",
+        "P_ATM_BAR",
+        "L",
+        "D",
+        "epsilon",
+        "dp",
+        "DP_MAX_PA",
+        "R",
+        "OUTPUT_COLS",
+        "INPUT_COLS",
+        "TEMP_COLS",
+        "MEASUREMENT_POSITIONS_M",
+        "MW_CH3OH",
+        "MW_CO",
+        "MW_H2",
+        "KCAL_PER_KGMOLE_TO_J_PER_MOL",
+        "A_CO",
+        "E_CO",
+        "T_ref_C",
+    ):
+        if k not in pinn_ns:
+            continue
+        v = pinn_ns[k]
+        if isinstance(v, (float, int, np.floating, np.integer)):
+            refs[k] = float(v) if not isinstance(v, (int, np.integer)) else int(v)
+        elif isinstance(v, (list, tuple)):
+            refs[k] = list(v)
+        elif isinstance(v, np.ndarray):
+            refs[k] = v.tolist()
+        else:
+            refs[k] = v
+    for required in ("T_REF", "P_REF_BAR", "F_REF", "T_HEAT_REF", "Q_REF", "T_BED_HI", "Q_MAX"):
+        if required not in refs:
+            raise RuntimeError(f"PINN notebook missing required constant {required}")
     state = {k: v.detach().clone() for k, v in model.state_dict().items()}
     if any(not torch.isfinite(v).all() for v in state.values()):
         raise RuntimeError("PINN training produced non-finite weights")
     torch.save(state, ARTIFACTS / "pinn.pt")
     (ARTIFACTS / "pinn_refs.json").write_text(json.dumps(refs, indent=2), encoding="utf-8")
-    website = pinn_namespace(state, refs)
+    joblib.dump({"residual_model": pinn_ns["residual_model"]}, ARTIFACTS / "pinn_residual.joblib")
+    website = pinn_namespace(state, refs, pinn_ns["residual_model"])
+    # Prefer hybrid scores from the notebook eval when present.
+    if "Y_hyb" in pinn_ns and "Y_true" in pinn_ns:
+        pinn_test = scores(pinn_ns["Y_true"], pinn_ns["Y_hyb"])
+    else:
+        pinn_test = scores(test_df[OUTPUT_COLS].to_numpy(), predict_rows(website, test_df))
     pinn = {
-        "selected": f"ReactorPINN (4×64 tanh), {int(pinn_ns['N_TRAIN_CASES'])} cases × {int(pinn_ns['EPOCHS'])} epochs",
-        "test": scores(test_df[OUTPUT_COLS].to_numpy(), predict_rows(website, test_df)),
+        "selected": (
+            f"ReactorPINN + residual, {int(pinn_ns['N_TRAIN_CASES'])} cases × "
+            f"{int(pinn_ns['EPOCHS'])} epochs"
+        ),
+        "test": pinn_test,
     }
 
     info = {

@@ -1,0 +1,55 @@
+{
+  "T_BED_HI": 390.2,
+  "T_BED_LO": 108.0,
+  "T_DATA_SCALE": 39.61641647035692,
+  "Q_MAX": 29.995310000000096,
+  "P_ATM_BAR": 1.01325,
+  "L": 1.0,
+  "D": 0.1,
+  "epsilon": 0.33,
+  "dp": 0.001,
+  "DP_MAX_PA": 193072.80000000005,
+  "R": 8.313608,
+  "T_REF": 352.6021003500583,
+  "P_REF_BAR": 3.5057042979385455,
+  "F_REF": 0.3027788582047625,
+  "T_HEAT_REF": 316.2582652664333,
+  "Q_REF": 2.9053952197588484,
+  "OUTPUT_COLS": [
+    "T_0.2m_C",
+    "T_0.4m_C",
+    "T_0.6m_C",
+    "T_0.8m_C",
+    "T_1m_C",
+    "P_out_bar_g",
+    "Q_total_kW",
+    "X_overall_pct"
+  ],
+  "INPUT_COLS": [
+    "T_in_C",
+    "P_in_bar_g",
+    "T_heat_C",
+    "F_in_kgmole_h"
+  ],
+  "TEMP_COLS": [
+    "T_0.2m_C",
+    "T_0.4m_C",
+    "T_0.6m_C",
+    "T_0.8m_C",
+    "T_1m_C"
+  ],
+  "MEASUREMENT_POSITIONS_M": [
+    0.2,
+    0.4,
+    0.6,
+    0.8,
+    1.0
+  ],
+  "MW_CH3OH": 0.03204,
+  "MW_CO": 0.02801,
+  "MW_H2": 0.002016,
+  "KCAL_PER_KGMOLE_TO_J_PER_MOL": 4.184,
+  "A_CO": 10000000.0,
+  "E_CO": 6036.8,
+  "T_ref_C": 25.0
+}
