@@ -163,7 +163,7 @@ export default function MethanolHeatingTwin({ className = "" }: { className?: st
 
       <div className="stage">
         <section className="hero-copy">
-          <p className="eyebrow">Methanol Heating Media</p>
+          <p className="eyebrow">Methanol Heating Media Model</p>
           <h2 className="hero-title">
             Set the heat media.
             <br />

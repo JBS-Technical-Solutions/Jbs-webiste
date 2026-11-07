@@ -24,13 +24,18 @@ The draft was already written by reading the PFD, then reading each P&ID node fr
 Keep these exactly:
 - The same nodes, in the same order. Do not add, merge or remove a node.
 - boundary is the node description: a short summary of the route (where the line comes from, what main equipment it passes, and where it goes). Do not list every instrument or valve.
-- Nodes are marked with a coloured dashed line on the P&ID. That mark often runs alongside piping and also through equipment. Only describe a stretch as piping when the coloured dashed line runs alongside a piping segment. Where the coloured dashed line passes through equipment, that stretch is not piping — name the equipment, do not invent a pipe there.
 - design_intent is one sentence: the overall purpose of that node.
 - design_conditions are the design and operating pressure and temperature of the main equipment only. Use a number only when it is on the P&ID. Do not add piping classes or small valves.
 
 You may improve causes, consequences and safeguards:
 - One cause is one credible failure of a device that is on the drawing.
-- The consequence is what that cause does to the equipment named on that line.
+- Before writing a consequence for any valve or instrument, use that component's objective on the drawing.
+- FSV / check valve objective is to stop reverse flow. Stuck open → reverse flow / upstream overpressure or contamination — never treat it as more forward flow.
+- If the FSV is on a liquid line, write liquid consequences (reverse liquid flow into the upstream vessel or through a pump; stuck closed → liquid blocked, high level / loss of liquid supply). Do not use gas-line wording for a liquid-line FSV.
+- For Reverse Flow, do not use a normally open valve (NO / LO / CSO) or a control valve fails-open as the cause. Reverse flow causes are check / FSV stuck open, or loss of upstream pressure / source pressure imbalance — not every open valve with a generic different-pressure note.
+- The cause column must never refer to another cause or consequence (no "Refer to…", "Same as…", "As above", "see earlier cause"). If a failure was already written, omit the extra cause line entirely. Do not invent general filler consequences for cross-reference rows.
+- Control valve consequences must match the controlled variable (level, pressure, flow or temperature).
+- The consequence is what that cause does to the equipment named on that line, given the device objective.
 - A safeguard is a device drawn on the P&ID that prevents that consequence: a trip, an alarm, a relief valve, a shutdown valve or a check valve. Name its tag.
 - Do not list a device that does not stop that consequence.
 - Never invent a tag, line number or equipment number. If it is not in extracted_entities or the draft, do not write it.

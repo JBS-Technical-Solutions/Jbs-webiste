@@ -21,13 +21,22 @@ DEG = "\u00b0F"
 PART_RADIUS = 0.16
 # Not part of the steady-state process node: drains, vents, blowdown and lines to safety valves.
 OFF_PROCESS_SERVICES = {"DW", "DH", "VG", "SV", "FL", "BD"}
+OFF_PROCESS_WORDS = (
+    "drain", "vent", "flare", "blowdown", "blow down", "bypass", "by-pass", "by pass",
+    "safety valve", "relief", "psv", "pzv", "prv", "pse", "to flare", "to vent",
+    "closed drain", "open drain",
+)
 
 
 def _off_process_line(line):
+    """True for flare, vent, drain and PSV/relief branches — not live in steady-state flow."""
     service = str(line.get("service") or "").upper()
     name = str(line.get("service_name") or "").lower()
-    return service in OFF_PROCESS_SERVICES or any(
-        word in name for word in ("drain", "vent", "flare", "blowdown", "blow down", "safety valve"))
+    tag = str(line.get("tag") or "").lower()
+    if service in OFF_PROCESS_SERVICES:
+        return True
+    blob = f"{name} {tag}"
+    return any(word in blob for word in OFF_PROCESS_WORDS)
 
 
 class Recs:
@@ -80,6 +89,18 @@ class Ctx:
                         "flammable hydrocarbon" if self.hydrocarbon else self.fluid)
         self.line_relation = list(ext.get("line_relation") or [])
         self.pfd_conditions = {}
+        # Step 1 — system and equipment purpose learned from the PFD before the P&ID worksheet.
+        self.pfd_system_purpose = ""
+        self.pfd_equipment_purposes = []
+        self.stream_line_map = []
+        self.line_operating = {}
+        self.equipment_operating = {}
+        self.line_design = {}
+        self.non_steady_segments = []
+        self.non_steady_by_role = {}
+        self.nc_isolation_valves = []
+        # Line tags indicated for the current node (set in _build). Empty = use main process piping.
+        self.node_line_tags = set()
         # Upstream is against the pipe arrows. Default is left (drawing reads left to right).
         self.upstream_side = _upstream_side(self)
 
@@ -105,11 +126,8 @@ class Ctx:
         return " / ".join(i["tag"] for i in items)
 
     def names(self, items):
-        seen = []
-        for i in items:
-            if i["code"] not in seen:
-                seen.append(i["code"])
-        return ", ".join(seen)
+        """Valve std codes with the line number each valve sits on."""
+        return _valve_labels(self, items)
 
     def node_start(self):
         """Where this node is read from: one inlet, or the equipment the process line leaves."""
@@ -182,6 +200,357 @@ def _valve_duty(valve):
     if kind.startswith(("ball", "gate", "plug", "butterfly")):
         return "isolate the line when it is closed"
     return "control the path it is installed in"
+
+
+def _valve_line(ctx, valve):
+    """The drawn line this piping valve sits on — required for location with the valve std."""
+    box = valve.get("box") if isinstance(valve, dict) else None
+    if not box:
+        return None
+    return (
+        _nearest_line(ctx.process_lines, box, limit=0.14)
+        or _nearest_line(ctx.lines, box, limit=0.16)
+        or _line_toward(ctx, box, 1)
+        or _line_toward(ctx, box, -1)
+    )
+
+
+def _valve_label(ctx, valve):
+    """Valve std / tag always with its line number so the location is known."""
+    if not isinstance(valve, dict):
+        text = str(valve or "").strip()
+        return text or "valve"
+    code = str(valve.get("code") or valve.get("tag") or "").strip() or "valve"
+    line = _valve_line(ctx, valve)
+    if line and line.get("tag"):
+        return f"{code} on {line['tag']}"
+    # Control valves / instruments: still try the nearest process line by box.
+    if valve.get("box"):
+        near = _nearest_line(ctx.process_lines, valve["box"], limit=0.16) or _nearest_line(ctx.lines, valve["box"], limit=0.18)
+        if near and near.get("tag"):
+            return f"{code} on {near['tag']}"
+    return f"{code} (line not read)"
+
+
+def _valve_labels(ctx, valves):
+    """Comma-separated valve stds, each with its line number."""
+    labels, seen = [], set()
+    for valve in valves or []:
+        if isinstance(valve, str):
+            label = valve
+        else:
+            label = _valve_label(ctx, valve)
+        key = label.upper()
+        if not label or key in seen:
+            continue
+        seen.add(key)
+        labels.append(label)
+    if not labels:
+        return "valve"
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} or {labels[1]}"
+    return f"{', '.join(labels[:-1])} or {labels[-1]}"
+
+
+def _is_check_device(item):
+    """FSV / safety category or a piping check valve — objective is reverse-flow prevention."""
+    if not item:
+        return False
+    letters = str(item.get("letters") or "")
+    if letters.startswith("FSV") or item.get("category") == "safety":
+        return True
+    return str(item.get("type") or "").lower().startswith("check")
+
+
+_NORMALLY_OPEN_ATTRS = {"NO", "LO", "CSO"}
+
+
+def _is_normally_open(item):
+    """True for valves marked normally open / locked open / car-sealed open on the P&ID."""
+    if not item:
+        return False
+    attrs = {str(a).upper() for a in (item.get("attributes") or [])}
+    if attrs & _NORMALLY_OPEN_ATTRS:
+        return True
+    # Fail-open is a control-valve air-failure action, not a reverse-flow initiating cause either.
+    if str(item.get("fail_action") or "").upper() == "FO" and item.get("category") == "control_valve":
+        return True
+    blob = f"{item.get('code') or ''} {item.get('tag') or ''}".upper()
+    return bool(re.search(r"(?:^|[\s(])(?:NO|LO|CSO)(?:$|[\s)])", blob))
+
+
+def _reverse_flow_cause_ok(ctx, cause):
+    """Reverse Flow must not blame a normally open valve for cross-pressure backflow."""
+    text = str(cause or "")
+    low = text.lower()
+    # Check / FSV stuck open is the intended reverse-flow device failure.
+    if re.search(
+        r"\bFSV-\d|\bVC-\d|\bsticks open\b|\bfails to seat\b|"
+        r"\binlet check valve\b|\bcheck valve\b.*\bfails open\b",
+        text, re.I,
+    ):
+        return True
+    # Pressure reversal without naming a normally open valve.
+    if "loss of upstream pressure" in low or "pressure imbalance" in low:
+        return True
+    if "different pressure" in low and "source" in low:
+        return True
+    for valve in list(ctx.valves or []) + list(ctx.instruments or []):
+        code = str(valve.get("code") or valve.get("tag") or "").strip()
+        if not code or code.upper() not in text.upper():
+            continue
+        if _is_check_device(valve):
+            continue
+        if _is_normally_open(valve):
+            return False
+        kind = str(valve.get("type") or "").lower()
+        if kind.startswith(("ball", "gate", "globe", "plug", "butterfly", "needle")):
+            if re.search(r"\b(open|opened|left open|fails open|fail open)\b", low):
+                return False
+        if valve.get("category") == "control_valve" and re.search(r"\bfails open\b|\bfail open\b", low):
+            return False
+    return True
+
+
+def _scrub_reverse_flow(nodes, ctx=None):
+    """Drop Reverse Flow rows that use a normally open valve as the cause."""
+    for node in nodes or []:
+        for group in node.get("deviations") or []:
+            if "reverse flow" not in str(group.get("deviation") or "").lower():
+                continue
+            kept = []
+            for item in group.get("rows") or []:
+                cause = item.get("cause")
+                text = str(cause or "")
+                low = text.lower()
+                if ctx is not None and not _reverse_flow_cause_ok(ctx, cause):
+                    continue
+                # Heuristic scrub (also covers AI-added rows): NO/LO/CSO or isolation "open" + pressure note.
+                if re.search(r"\b(NO|LO|CSO)\b", text) and re.search(r"\bopen\b", low):
+                    if not re.search(r"\bFSV-\d|\bsticks open\b|\bfails to seat\b", text, re.I):
+                        continue
+                if re.search(r"\b(VB|VG|VGL|VN|VBF|VP)-\d", text, re.I) and (
+                        "different pressure" in low or "backflow" in low or "reverse" in low):
+                    if not re.search(r"\bFSV-\d|\bVC-\d|\bcheck valve\b|\bsticks open\b", text, re.I):
+                        continue
+                if re.search(r"\bfails open\b|\bfail open\b", low) and not re.search(
+                        r"\bFSV-\d|\bVC-\d|\bcheck valve\b|\bsticks open\b", text, re.I):
+                    continue
+                kept.append(item)
+            group["rows"] = kept
+
+
+def _check_tag(item):
+    return item.get("tag") or item.get("code") or "the check valve"
+
+
+def _check_line(ctx, item):
+    """The process line this FSV / check valve sits on."""
+    box = item.get("box") if isinstance(item, dict) else None
+    if not box:
+        return None
+    return (
+        _nearest_line(ctx.process_lines, box, limit=0.14)
+        or _line_toward(ctx, box, 1)
+        or _line_toward(ctx, box, -1)
+        or _nearest_line(ctx.lines, box, limit=0.14)
+    )
+
+
+def _check_phase(ctx, item):
+    """liquid / gas / mixed for the line this check valve protects — not the whole-node majority fluid."""
+    line = _check_line(ctx, item)
+    if line:
+        info = (kb.services().get("codes") or {}).get(str(line.get("service") or "").upper()) or {}
+        phase = str(info.get("phase") or "").lower()
+        name = str(line.get("service_name") or info.get("name") or "").lower()
+        tag = str(line.get("tag") or "").lower()
+        blob = f"{name} {tag} {line.get('service') or ''}".lower()
+        if phase == "liquid" or any(
+            word in blob for word in (
+                "liquid", "oil", "condensate", "water", "glycol", "diesel", "produced water",
+            )
+        ):
+            return "liquid"
+        if phase == "gas" or any(word in blob for word in ("gas", "vapour", "vapor", "fuel gas", "flare")):
+            return "gas"
+        if phase == "mixed":
+            return "mixed"
+    # Geometry: under a vessel / tank = liquid outlet; beside a pump = liquid service.
+    up = _nearest_large(ctx, item.get("box"), -1)
+    down = _nearest_large(ctx, item.get("box"), 1)
+    for eq in (up, down):
+        if not eq:
+            continue
+        if eq.get("kind") == "pump":
+            return "liquid"
+        if eq.get("kind") in ("vessel", "tank") and item.get("box") and eq.get("box"):
+            if _cy(item) >= _cy(eq) - 0.02:
+                return "liquid"
+    for conn in list(ctx.dests) + list(ctx.sources):
+        text = str(conn.get("description") or "").lower()
+        if any(word in text for word in ("liquid", "oil", "condensate", "water", "separat")):
+            if conn.get("box") and item.get("box") and _box_gap(item["box"], conn["box"]) <= 0.2:
+                return "liquid"
+    return "gas" if ctx.gas else "liquid"
+
+
+def _check_fluid(ctx, item):
+    """Name the fluid on this check valve's own line."""
+    phase = _check_phase(ctx, item)
+    line = _check_line(ctx, item)
+    if line:
+        name = line.get("service_name") or kb.service_name(line.get("service") or "")
+        if name:
+            return str(name).lower()
+    if phase == "liquid":
+        return "liquid"
+    if phase == "gas":
+        return "gas" if "gas" in ctx.fluid else ctx.fluid
+    return ctx.fluid
+
+
+def _check_neighbors(ctx, item):
+    up = _nearest_large(ctx, item.get("box"), -1)
+    down = _nearest_large(ctx, item.get("box"), 1)
+    up_name = _equip_name(up, _soft(ctx.src_text()))
+    down_name = _equip_name(down, _soft(ctx.dest_text()))
+    return up, down, up_name, down_name
+
+
+def _check_purpose(ctx, item):
+    """Objective of a check valve / FSV before any stuck-open or stuck-closed consequence."""
+    _, _, up, down = _check_neighbors(ctx, item)
+    fluid = _check_fluid(ctx, item)
+    phase = _check_phase(ctx, item)
+    if phase == "liquid":
+        return (
+            f"pass forward liquid ({fluid}) from {up} toward {down} "
+            f"and stop reverse liquid flow back toward {up}"
+        )
+    return (
+        f"pass forward flow of {fluid} from {up} toward {down} "
+        f"and stop reverse flow back toward {up}"
+    )
+
+
+def _check_stuck_open_consequence(ctx, item):
+    """Stuck open = latent loss of reverse-flow protection — not 'more forward flow'."""
+    tag = _check_tag(item)
+    up_eq, down_eq, up, down = _check_neighbors(ctx, item)
+    fluid = _check_fluid(ctx, item)
+    phase = _check_phase(ctx, item)
+    line = _check_line(ctx, item)
+    on_line = f" on {line['tag']}" if line and line.get("tag") else ""
+    purpose = _check_purpose(ctx, item)
+    if phase == "liquid":
+        bits = [
+            f"{tag} is a check valve (flow safety valve){on_line} in liquid service; its purpose is to {purpose}.",
+            f"When {tag} sticks open, it no longer seats against reverse liquid flow.",
+        ]
+        if (up_eq and up_eq.get("kind") == "pump") or (down_eq and down_eq.get("kind") == "pump"):
+            pump = _equip_name(up_eq if up_eq and up_eq.get("kind") == "pump" else down_eq, "the pump")
+            bits.append(
+                f"If {pump} stops or a higher-pressure liquid source remains at {down}, "
+                f"liquid flows backwards through {pump} toward {up}, with reverse rotation, "
+                f"seal damage and possible loss of containment of {fluid}."
+            )
+        elif up_eq and up_eq.get("kind") in ("vessel", "tank"):
+            bits.append(
+                f"If pressure at {down} exceeds the liquid head at {up}, liquid flows back into {up}, "
+                f"raising level / contaminating the inventory, and can drive liquid toward vapour outlets "
+                f"or other upstream equipment."
+            )
+        else:
+            bits.append(
+                f"If pressure at {down} exceeds pressure at {up}, liquid ({fluid}) flows backwards toward {up}, "
+                f"with possible overfill, contamination or overpressure of upstream liquid equipment."
+            )
+        return " ".join(bits)
+    return (
+        f"{tag} is a check valve (flow safety valve){on_line}; its purpose is to {purpose}. "
+        f"When {tag} sticks open, it no longer seats against reverse flow. "
+        f"If pressure at {down} exceeds pressure at {up}, {fluid} flows backwards toward {up}, "
+        f"with possible overpressure or contamination of upstream equipment."
+    )
+
+
+def _check_stuck_closed_consequence(ctx, item):
+    tag = _check_tag(item)
+    up_eq, down_eq, up, down = _check_neighbors(ctx, item)
+    fluid = _check_fluid(ctx, item)
+    phase = _check_phase(ctx, item)
+    line = _check_line(ctx, item)
+    on_line = f" on {line['tag']}" if line and line.get("tag") else ""
+    purpose = _check_purpose(ctx, item)
+    if phase == "liquid":
+        bits = [
+            f"{tag} is a check valve (flow safety valve){on_line} in liquid service; its purpose is to {purpose}.",
+            f"When {tag} sticks closed, forward liquid flow from {up} to {down} is blocked.",
+        ]
+        if up_eq and up_eq.get("kind") in ("vessel", "tank"):
+            bits.append(
+                f"Liquid cannot leave {up}, the level rises, and liquid can carry over into the vapour outlet. "
+                f"Downstream liquid users at {down} lose supply."
+            )
+        elif up_eq and up_eq.get("kind") == "pump":
+            bits.append(
+                f"{up} can dead-head against {tag}, with seal damage and loss of liquid supply to {down}."
+            )
+        else:
+            bits.append(
+                f"Liquid inventory backs up toward {up} and {down} loses liquid supply."
+            )
+        return " ".join(bits)
+    return (
+        f"{tag} is a check valve (flow safety valve){on_line}; its purpose is to {purpose}. "
+        f"When {tag} sticks closed, forward flow of {fluid} from {up} to {down} is blocked."
+    )
+
+
+def _cv_purpose(ctx, cv, eq=None):
+    """Objective of this control valve from its ISA letter and where it sits."""
+    letters = str(cv.get("letters") or "")[:1]
+    if letters == "L":
+        return _lv_purpose(_level_vessel_for(ctx, cv, eq))
+    if letters == "P":
+        drum = _downstream_drum(ctx, cv.get("box")) or eq
+        where = _equip_name(drum or eq, "the downstream equipment")
+        return f"let down / control the pressure of {ctx.fluid} toward {where}"
+    if letters == "F":
+        return f"control the flow rate of {ctx.fluid}"
+    if letters == "T":
+        return f"control temperature by regulating the flow of {ctx.fluid}"
+    if letters == "H":
+        return f"hand-regulate the path of {ctx.fluid}"
+    return _instrument_duty(cv, ctx)
+
+
+def _with_valve_purpose(ctx, item, effect, purpose=None):
+    """State the component objective before the failure effect."""
+    tag = item.get("tag") or item.get("code") or "the valve"
+    letters = str(item.get("letters") or "")
+    head = letters[:1]
+    if _is_check_device(item):
+        kind = "check valve (flow safety valve)"
+        purpose = purpose or _check_purpose(ctx, item)
+    elif item.get("category") == "control_valve" or (len(letters) >= 2 and head in "LPFTH"):
+        kind = {
+            "L": "level control valve", "P": "pressure control valve",
+            "F": "flow control valve", "T": "temperature control valve",
+            "H": "hand control valve",
+        }.get(head, "control valve")
+        purpose = purpose or _cv_purpose(ctx, item)
+    else:
+        kind = "valve"
+        purpose = purpose or _valve_duty(item)
+    effect = str(effect or "").strip()
+    effect = effect[0].lower() + effect[1:] if effect else "the intended duty is lost."
+    if effect.endswith("."):
+        effect = effect[:-1]
+    return f"{tag} is a {kind}; its purpose is to {purpose}. When {effect}."
 
 
 def _reading_order(items):
@@ -262,32 +631,60 @@ def _place_name(name):
 
 
 def _design_conditions(ctx):
-    """Design and operating conditions of the main equipment, taken from the P&ID."""
+    """Design and operating conditions — P&ID block plus Step 3 mapped PFD operating parameters."""
     from .parse import _harvest_design
     _harvest_design(ctx.equipment, ctx.ext.get("tokens") or [])
     sentences = []
     for eq in _large_equipment(ctx)[:6]:
-        d = eq.get("design") or {}
+        d = dict(eq.get("design") or {})
+        mapped = (getattr(ctx, "equipment_operating", None) or {}).get(str(eq.get("tag") or "").upper()) or {}
+        if mapped.get("p_op") is not None and d.get("p_op") is None:
+            d["p_op"] = mapped["p_op"]
+        if mapped.get("t_op") is not None and d.get("t_op") is None:
+            d["t_op"] = mapped["t_op"]
         bits = []
         if d.get("p_des"):
             bits.append(f"design pressure {d['p_des']} psig")
         if d.get("p_op"):
-            bits.append(f"operating pressure {d['p_op']} psig")
+            src = " from PFD map" if mapped.get("p_op") is not None and (eq.get("design") or {}).get("p_op") is None else ""
+            bits.append(f"operating pressure {d['p_op']} psig{src}")
         if d.get("t_des"):
             bits.append(f"design temperature {d['t_des']} {DEG}")
         if d.get("t_op") is not None:
-            bits.append(f"operating temperature {d['t_op']} {DEG}")
+            src = " from PFD map" if mapped.get("t_op") is not None and (eq.get("design") or {}).get("t_op") is None else ""
+            bits.append(f"operating temperature {d['t_op']} {DEG}{src}")
         if bits:
             sentences.append(f"{eq['tag']}: " + ", ".join(bits))
         else:
             sentences.append(f"{eq['tag']}: design and operating conditions are not shown on the P&ID")
+    # Also state a few mapped line operating conditions from Step 3.
+    line_ops = getattr(ctx, "line_operating", None) or {}
+    for tag, ops in list(line_ops.items())[:4]:
+        bits = []
+        if ops.get("p_op") is not None:
+            bits.append(f"{ops['p_op']} psig")
+        if ops.get("t_op") is not None:
+            bits.append(f"{ops['t_op']} {DEG}")
+        if bits:
+            stream = f" (PFD stream {ops['pfd_stream']})" if ops.get("pfd_stream") else ""
+            sentences.append(f"Line {tag}{stream}: operating " + ", ".join(bits))
     return ". ".join(sentences)
 
 
 def _overall_intent(ctx):
-    """One sentence for what this node is there to do."""
+    """One sentence for what this node is there to do — prefer PFD equipment purpose from step 1."""
     fluid = ctx.fluid
     large = _large_equipment(ctx)
+    # Prefer the purpose already learned from the PFD for equipment on this node.
+    pfd_purposes = getattr(ctx, "pfd_equipment_purposes", None) or []
+    if pfd_purposes and large:
+        tags = {str(e.get("tag") or "").upper() for e in large}
+        matched = [
+            item for item in pfd_purposes
+            if str(item.get("tag") or "").upper() in tags
+        ]
+        if matched:
+            return " ".join(item["purpose"] for item in matched[:3])
     valves = _reading_order(ctx.find(cats=("control_valve",)))
     exchangers = [e for e in large if e.get("kind") == "exchanger"]
     heaters = [e for e in large if e.get("kind") == "heater"]
@@ -313,6 +710,9 @@ def _overall_intent(ctx):
     elif pumps:
         clauses.append(f"transfer the {fluid} with {_and([e['tag'] for e in pumps])}")
     if not clauses:
+        system = (getattr(ctx, "pfd_system_purpose", None) or "").strip()
+        if system:
+            return system.split(".")[0].strip() + "."
         return f"To move {fluid} from {ctx.src_text()} to {ctx.dest_text()}."
     return "To " + clauses[0] + "".join(f", and {clause}" for clause in clauses[1:]) + "."
 
@@ -330,53 +730,96 @@ def _line_phrase(ctx, line):
     return f"P&ID line {tag}"
 
 
-def _point_in_box(px, py, box, pad=0.012):
-    return box[0] - pad <= px <= box[2] + pad and box[1] - pad <= py <= box[3] + pad
+def _line_size_inches(line):
+    """Nominal bore in inches, or None when the size was not read."""
+    raw = str(line.get("size") or "").strip().strip('"').replace("″", "").replace("'", "")
+    if not raw:
+        return None
+    raw = raw.replace(" ", "")
+    if re.fullmatch(r"\d+-\d+/\d+", raw):
+        whole, num, den = re.match(r"(\d+)-(\d+)/(\d+)", raw).groups()
+        return float(whole) + float(num) / float(den)
+    if "/" in raw:
+        num, den = raw.split("/", 1)
+        try:
+            return float(num) / float(den)
+        except ValueError:
+            return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
 
 
-def _segment_through_equipment(seg, equipment):
-    """True when the coloured stroke mainly sits inside equipment (not alongside piping)."""
-    points = [(seg[0], seg[1]), (seg[2], seg[3]), ((seg[0] + seg[2]) / 2, (seg[1] + seg[3]) / 2)]
-    for eq in equipment or []:
-        box = eq.get("box")
-        if not box or len(box) != 4:
-            continue
-        if sum(1 for px, py in points if _point_in_box(px, py, box)) >= 2:
-            return True
-    return False
+def _is_trim_line(line):
+    """Instrument / utility / small-bore hook-up — not the indicated node process piping."""
+    if _off_process_line(line):
+        return True
+    service = str(line.get("service") or "").upper()
+    if service in ("GI", "GU", "IA", "N", "SO", "LO"):
+        return True
+    inches = _line_size_inches(line)
+    return inches is not None and inches <= 1.0
 
 
-def _piping_segments(segments, equipment):
-    """Colour-mark strokes that run alongside piping — exclude stretches drawn through equipment."""
-    return [seg for seg in (segments or []) if not _segment_through_equipment(seg, equipment)]
+def _node_piping(ctx):
+    """Indicated process piping for this node — not equipment internals and not trim.
 
-
-def _line_alongside_color(line, piping_segs, limit=None):
-    """A line tag counts as piping on the node only when it sits on a piping (not through-equipment) stroke."""
-    if not piping_segs:
-        return False
-    near = _COLOR_NEAR if limit is None else limit
-    dist = min(_point_seg(px, py, seg) for px, py in _entity_points(line) for seg in piping_segs)
-    return dist <= near
-
-
-def _lines_on_route(ctx, source, target, piping_segs=None):
-    """Process lines from this inlet toward the main equipment, in left-to-right order.
-
-    When colour-mark segments are given, only lines whose tags sit alongside a piping
-    segment of that mark are kept. Colour that only passes through equipment is not piping.
+    Prefer line tags marked on the node. Drop flare/vent/drain and small-bore instrument
+    trim so the node description follows the indicated pipe only.
     """
+    tagged = {str(t).upper() for t in (getattr(ctx, "node_line_tags", None) or []) if t}
+    pool = []
+    for line in ctx.process_lines:
+        tag = str(line.get("tag") or "").upper()
+        if not tag:
+            continue
+        if tagged and tag in tagged:
+            pool.append(line)
+            continue
+        if _is_trim_line(line):
+            continue
+        if not tagged:
+            pool.append(line)
+    if tagged:
+        indicated = [line for line in pool if str(line.get("tag") or "").upper() in tagged]
+        if indicated:
+            pool = indicated
+    if not pool:
+        pool = [line for line in ctx.process_lines if not _is_trim_line(line)] or list(ctx.process_lines)
+    large = [line for line in pool if (_line_size_inches(line) or 0) > 1.0]
+    if large and len(large) < len(pool):
+        tagged_large = [line for line in large if not tagged or str(line.get("tag") or "").upper() in tagged]
+        if tagged_large or not tagged:
+            return tagged_large or large
+    return pool
+
+
+def _equipment_on_piping(ctx, piping):
+    """Large equipment that the indicated node piping meets — not every nearby tag."""
+    boxes = []
+    for line in piping or []:
+        boxes.extend(line.get("boxes") or ([line["box"]] if line.get("box") else []))
+    if not boxes:
+        return []
+    found = []
+    for eq in _large_equipment(ctx):
+        if eq.get("box") and _near_any(eq["box"], boxes, 0.12):
+            found.append(eq)
+    return found
+
+
+def _lines_on_route(ctx, source, target):
+    """Indicated node piping from this inlet toward the main equipment, along the flow."""
     box = source.get("box") or [0, 0, 0, 0]
     sy = (box[1] + box[3]) / 2
     sx = _cx(source)
     end_x = _cx(target) if target else 1
     found = []
     seen = set()
-    for line in ctx.process_lines:
+    for line in _node_piping(ctx):
         tag = line.get("tag")
         if not tag or tag in seen:
-            continue
-        if piping_segs is not None and not _line_alongside_color(line, piping_segs):
             continue
         boxes = line.get("boxes") or ([line["box"]] if line.get("box") else [])
         for candidate in boxes:
@@ -389,86 +832,127 @@ def _lines_on_route(ctx, source, target, piping_segs=None):
     return sorted(found, key=_cx)
 
 
-def _node_description(ctx, color=None, color_segments=None):
-    """A short route summary, read left to right, naming the P&ID line and its PFD stream.
+def _order_along_flow(ctx, items, toward):
+    """Order equipment the way the pipe arrows run into the target, not left-to-right by default."""
+    if not items:
+        return []
+    if not toward:
+        return sorted(items, key=_cx)
+    heading = _heading_at(ctx, toward.get("box"))
+    # heading -1 means upstream is to the left of target → feeders should be listed left-to-right into target.
+    reverse = heading > 0
+    return sorted(items, key=_cx, reverse=reverse)
 
-    Colour-dashed node marks: only the parts that run alongside a piping segment are
-    described as piping. Where the same mark passes through equipment, that stretch is
-    equipment on the route — not a piping segment.
-    """
+
+def _node_description(ctx, color=None):
+    """Short route summary of the indicated node piping only — not trim, not equipment internals."""
     fluid = ctx.fluid
-    large = _large_equipment(ctx)
+    piping = _node_piping(ctx)
+    large = _equipment_on_piping(ctx, piping) or _large_equipment(ctx)
     vessels = [e for e in large if e.get("kind") == "vessel"]
     target = vessels[0] if vessels else (large[-1] if large else None)
-    sources = sorted(ctx.sources, key=lambda item: (_cx(item), ((item.get("box") or [0, 0, 0, 0])[1])))
-    valves = ctx.find(cats=("control_valve",))
+    valves = [v for v in ctx.find(cats=("control_valve",)) if not _on_off_process(ctx, v)]
     sentences = []
-    if not sources and large:
-        sources = [{"description": _eq_phrase(large[0]), "box": large[0].get("box"), "_skip": large[0]["tag"]}]
-    end_x = _cx(target) if target else 1
-    piping_segs = None
-    if color_segments is not None:
-        # Geometry of the coloured dashed mark: only strokes alongside piping count as piping.
-        piping_segs = _piping_segments(color_segments, large)
-    elif color:
-        # Colour name only (no geometry): still avoid inventing piping where none was read.
-        piping_segs = [] if not ctx.process_lines else None
+    # The subject of the description is always the indicated pipe tags.
+    line_bits = [_line_phrase(ctx, line) for line in piping[:3]]
+    where = f" on {_and(line_bits)}" if line_bits else ""
 
-    def _on_this_inlet(item, source):
-        if source.get("_skip") and item.get("tag") == source.get("_skip"):
-            return False
-        if target and item.get("tag") == target.get("tag"):
-            return False
-        x = _cx(item)
-        if x < _cx(source) - 0.02 or x > end_x + 0.02:
-            return False
-        nearest = min(sources, key=lambda s: abs(((s.get("box") or [0, 0, 0, 0])[1] + (s.get("box") or [0, 1, 0, 1])[3]) / 2 - ((item.get("box") or [0, 0, 0, 0])[1] + (item.get("box") or [0, 1, 0, 1])[3]) / 2))
-        return nearest is source
-
-    for index, source in enumerate(sources[:4]):
-        through = [_eq_phrase(eq) for eq in sorted(large, key=_cx) if _on_this_inlet(eq, source)]
-        on_path = sorted([v for v in valves if _on_this_inlet(v, source)], key=_cx)
+    feeders = _feeders_of(ctx, target) if target else []
+    if target and feeders:
+        ordered = _order_along_flow(ctx, feeders, target)
+        # Control valves that sit on the indicated piping between feeder and target.
+        on_path = []
+        for feeder in ordered:
+            for valve in valves:
+                line = _line_between(ctx, feeder, target)
+                if line and line not in piping:
+                    continue
+                boxes = (line.get("boxes") if line else None) or ([line["box"]] if line and line.get("box") else [])
+                if line and valve.get("box") and boxes and _near_any(valve["box"], boxes, 0.1):
+                    if valve not in on_path:
+                        on_path.append(valve)
+        origin = _and([_eq_phrase(eq) for eq in ordered[:3]])
+        mid = []
+        # Equipment the indicated piping passes — named as way-points, not as piping itself.
+        for eq in _order_along_flow(ctx, [e for e in large if e.get("tag") != target.get("tag") and e not in ordered], target):
+            mid.append(_eq_phrase(eq))
         if on_path:
-            through.append(_join_tags([v.get("tag") for v in on_path]))
-        route_lines = _lines_on_route(ctx, source, target, piping_segs=piping_segs)
-        where = f" on {_and([_line_phrase(ctx, line) for line in route_lines[:2]])}" if route_lines else ""
-        # "line" only when a real piping segment is on the colour mark; otherwise the route is through equipment.
-        if route_lines:
-            lead = f"{fluid.capitalize()} line" if index == 0 else f"Another {fluid} line"
-        elif through or target:
-            lead = f"{fluid.capitalize()}" if index == 0 else f"More {fluid}"
+            mid.append(_join_tags([v.get("tag") for v in on_path]))
+        if mid:
+            sentences.append(
+                f"{fluid.capitalize()} piping{where} from {origin} passes {', '.join(mid)} to {target['tag']}."
+            )
         else:
-            lead = f"{fluid.capitalize()} line" if index == 0 else f"Another {fluid} line"
-        origin = _conn_name(source)
-        if through and target:
-            sentences.append(f"{lead}{where} from {origin} going through {', '.join(through)} to {target['tag']}.")
-        elif target:
-            sentences.append(f"{lead}{where} from {origin} going to {target['tag']}.")
-        elif through:
-            sentences.append(f"{lead}{where} from {origin} going through {', '.join(through)}.")
-        else:
-            sentences.append(f"{lead}{where} from {origin}.")
+            sentences.append(f"{fluid.capitalize()} piping{where} from {origin} to {target['tag']}.")
+    else:
+        sources = sorted(ctx.sources, key=lambda item: (_cx(item), ((item.get("box") or [0, 0, 0, 0])[1])))
+        if not sources and large:
+            sources = [{"description": _eq_phrase(large[0]), "box": large[0].get("box"), "_skip": large[0]["tag"]}]
+
+        def _on_this_inlet(item, source):
+            if source.get("_skip") and item.get("tag") == source.get("_skip"):
+                return False
+            if target and item.get("tag") == target.get("tag"):
+                return False
+            if piping and item in _large_equipment(ctx) and item not in large:
+                return False
+            if target and item in large:
+                line = _line_between(ctx, item, target)
+                if line and line not in piping and piping:
+                    return False
+                verdict = _flows_from_to(line, item, target) if line else None
+                if verdict is False:
+                    return False
+            x = _cx(item)
+            lo, hi = sorted([_cx(source), _cx(target) if target else 1])
+            if x < lo - 0.05 or x > hi + 0.05:
+                return False
+            nearest = min(sources, key=lambda s: abs(_cy(s) - _cy(item)))
+            return nearest is source
+
+        for index, source in enumerate(sources[:4]):
+            route_lines = _lines_on_route(ctx, source, target) or piping[:2]
+            route_where = f" on {_and([_line_phrase(ctx, line) for line in route_lines[:2]])}" if route_lines else where
+            along = _order_along_flow(ctx, [eq for eq in large if _on_this_inlet(eq, source)], target)
+            through = [_eq_phrase(eq) for eq in along]
+            on_path = [v for v in valves if _on_this_inlet(v, source)]
+            on_path = _order_along_flow(ctx, on_path, target) if target else sorted(on_path, key=_cx)
+            if on_path:
+                through.append(_join_tags([v.get("tag") for v in on_path]))
+            lead = f"{fluid.capitalize()} piping" if index == 0 else f"Other {fluid} piping"
+            origin = _conn_name(source)
+            named = str(source.get("equipment") or "").strip()
+            if named:
+                origin = named
+            if through and target:
+                sentences.append(f"{lead}{route_where} from {origin} passes {', '.join(through)} to {target['tag']}.")
+            elif target:
+                sentences.append(f"{lead}{route_where} from {origin} to {target['tag']}.")
+            elif through:
+                sentences.append(f"{lead}{route_where} from {origin} passes {', '.join(through)}.")
+            else:
+                sentences.append(f"{lead}{route_where} from {origin}.")
+
     if vessels:
-        outlet = [line for line in _lines_on_route(ctx, vessels[0], None, piping_segs=piping_segs) if _cx(line) > _cx(vessels[0])]
-        if outlet:
-            outlet_text = f" through {_line_phrase(ctx, outlet[0])}"
-        elif piping_segs is not None and not piping_segs:
-            outlet_text = f" from {vessels[0]['tag']}"
-        else:
-            outlet_text = " through the outlet liquid line"
+        # Outlet on indicated node piping only — not a drain/trim branch.
+        outlet_line = _line_toward(ctx, vessels[0].get("box"), 1)
+        if outlet_line and outlet_line not in piping and piping:
+            outlet_line = next((line for line in piping if _cx(line) >= _cx(vessels[0]) - 0.02), None)
+        outlet_text = f" through {_line_phrase(ctx, outlet_line)}" if outlet_line else " through the outlet liquid piping"
         liquid = [c for c in ctx.dests if any(word in _conn_name(c) for word in ("separat", "liquid", "oil", "condensate", "water"))]
         chosen = liquid or list(ctx.dests)
         if chosen:
             places = _and([_place_name(_conn_name(c)) for c in chosen[:3]])
             sentences.append(
-                f"{vessels[0]['tag']} separates the liquid from vapor and liquid flows{outlet_text} going to {places}."
+                f"{vessels[0]['tag']} separates the liquid from vapor and liquid leaves on the indicated "
+                f"piping{outlet_text} going to {places}."
             )
         else:
             sentences.append(f"{vessels[0]['tag']} separates the liquid from vapor.")
     elif not sentences:
-        sentences.append(f"{fluid.capitalize()} from {ctx.src_text()} to {ctx.dest_text()}.")
-    text = " ".join(sentences)
-    return text
+        bits = f" on {_and(line_bits)}" if line_bits else ""
+        sentences.append(f"{fluid.capitalize()} piping{bits} from {ctx.src_text()} to {ctx.dest_text()}.")
+    return " ".join(sentences)
 
 
 def _listed(items, key, limit=12):
@@ -590,7 +1074,8 @@ def trip_safeguards(ctx, var, direction, eq=None):
 
 
 def ctx_var(i):
-    return i["variable"].split(" /")[0].lower()
+    text = i.get("variable") or i.get("letters") or i.get("tag") or ""
+    return str(text).split(" /")[0].lower()
 
 
 def controller_safeguard(ctx, var, direction=None):
@@ -663,28 +1148,20 @@ def relief_safeguards(ctx, eq=None):
 
 
 def check_safeguards(ctx, eq=None):
+    """Process-line check valves / FSVs only — drain, flare and root devices are not safeguards here."""
     found, seen = [], set()
-    for inst in ctx.instruments:
-        if not (str(inst.get("letters") or "").startswith("FSV") or inst.get("category") == "safety"):
-            continue
-        if not _same_equipment(ctx, inst, eq):
-            continue
-        tag = str(inst.get("tag") or "").upper()
+    for inst in _process_check_devices(ctx, eq):
+        tag = str(inst.get("tag") or inst.get("code") or "").upper()
         if not tag or tag in seen:
             continue
         seen.add(tag)
         found.append(inst)
-    out = [sg(f"{i['tag']} check valve", i["tag"], strong=True) for i in found]
-    if not out:
-        for valve in ctx.valves_of("check"):
-            code = str(valve.get("code") or "").upper()
-            if not code or code in seen:
-                continue
-            seen.add(code)
-            out.append(sg(f"Check valve {valve.get('code')}", valve["code"], strong=True))
-            if len(out) >= 4:
-                break
-    return out
+        if len(found) >= 4:
+            break
+    return [
+        sg(f"{i.get('tag') or i.get('code')} check valve", i.get("tag") or i.get("code"), strong=True)
+        for i in found
+    ]
 
 
 def skin_safeguards(ctx):
@@ -761,34 +1238,128 @@ def _norm_row_text(text):
     return re.sub(r"\s+", " ", str(text or "").strip().lower())
 
 
+def _cause_device_key(cause):
+    """One device failure is one cause: ('LV-8250A', 'closed'). Empty tag → full-text key."""
+    text = str(cause or "")
+    match = re.search(r"\b([A-Z]{1,5}-\d{3,5}[A-Z0-9]*)\b", text.upper())
+    tag = match.group(1) if match else ""
+    low = text.lower()
+    if "fails closed" in low or "fail closed" in low or "fails shut" in low or "sticks closed" in low:
+        action = "closed"
+    elif "fails open" in low or "fail open" in low or "sticks open" in low:
+        action = "open"
+    elif "inadvertent closure" in low or "isolation" in low:
+        action = "isolation"
+    elif "fails" in low:
+        action = "fails"
+    else:
+        action = _norm_row_text(text)
+    if tag:
+        return (tag, action)
+    return ("", _norm_row_text(text))
+
+
+def _unique_cause_rows(rows):
+    """Keep the first row for each device failure; drop later repeats of the same cause."""
+    seen = set()
+    out = []
+    for item in rows or []:
+        key = _cause_device_key(item.get("cause"))
+        if key in seen and key[0]:
+            continue
+        if key[0]:
+            seen.add(key)
+        elif key[1]:
+            if key[1] in seen:
+                continue
+            seen.add(key[1])
+        out.append(item)
+    return out
+
+
+_CAUSE_CROSS_REF = re.compile(
+    r"(?i)\b("
+    r"refer(?:ring)?\s+to|same\s+as|as\s+above|as\s+before|as\s+per\b|"
+    r"see\s+(?:earlier|above|previous|cause|consequence|clause)|"
+    r"per\s+(?:earlier|previous|above)\s+(?:cause|consequence|clause)|"
+    r"already\s+(?:written|stated|covered)|"
+    r"described\s+(?:earlier|above|previously)|"
+    r"earlier\s+(?:cause|consequence|clause|row)|"
+    r"previous\s+(?:cause|consequence|clause|row)"
+    r")\b"
+)
+
+
+def _cause_refers_elsewhere(cause):
+    """True when the cause column points at another cause/consequence instead of stating a failure."""
+    text = str(cause or "").strip()
+    if not text:
+        return True
+    if _CAUSE_CROSS_REF.search(text):
+        return True
+    # Bare cross-ref lines such as "Refer to clause 1.2 cause 1."
+    if re.match(r"(?i)^(same\s+as|refer\s+to|as\s+above|see\s+)\b", text):
+        return True
+    return False
+
+
+def _scrub_cause_cross_refs(nodes):
+    """Remove any row whose cause refers to another cause or consequence."""
+    for node in nodes or []:
+        for group in node.get("deviations") or []:
+            group["rows"] = [
+                item for item in (group.get("rows") or [])
+                if not _cause_refers_elsewhere(item.get("cause"))
+            ]
+
+
 def _dedupe_worksheet(nodes):
-    """A repeated cause or consequence points back to the first place it was written."""
+    """Drop repeated device/cause rows. Cause never cross-refers; repeated consequence text may point back."""
     seen_causes = {}
+    seen_devices = set()
     seen_cons = {}
     for node in nodes or []:
         for group in node.get("deviations") or []:
             label = str(group.get("deviation") or "").strip() or "deviation"
+            kept = []
             for index, item in enumerate(group.get("rows") or [], 1):
                 cause = str(item.get("cause") or "").strip()
+                # Cause states a failure only — never a pointer to another row.
+                if _cause_refers_elsewhere(cause):
+                    continue
+                device = _cause_device_key(cause)
+                # Same LV/PV failure already written earlier on this worksheet → drop the repeat.
+                if device[0] and device in seen_devices:
+                    continue
+                if device[0]:
+                    seen_devices.add(device)
                 key = _norm_row_text(cause)
                 if key:
                     if key in seen_causes:
-                        item["cause"] = f"Same as {seen_causes[key]}."
-                    else:
-                        seen_causes[key] = f"{label} cause {index}"
+                        # Same cause already written — drop the extra line (do not rewrite as Refer to…).
+                        continue
+                    seen_causes[key] = f"{label} cause {index}"
                 fresh = []
                 for cons in item.get("consequences") or []:
                     text = str(cons or "").strip()
                     ck = _norm_row_text(text)
                     if not ck:
                         continue
+                    # Do not keep a consequence that only points at a cause; cause owns the failure.
+                    if re.search(r"(?i)\brefer(?:ring)?\s+to\b.*\bcause\b", text):
+                        continue
+                    if re.match(r"^(same as|refer to)\b", text, re.I):
+                        continue
                     if ck in seen_cons:
-                        fresh.append(f"Same as {seen_cons[ck]}.")
+                        fresh.append(f"Refer to clause {seen_cons[ck]}.")
                     else:
                         seen_cons[ck] = f"{label} consequence {index}"
                         fresh.append(text)
                 if fresh:
                     item["consequences"] = fresh
+                kept.append(item)
+            group["rows"] = kept
+    _scrub_cause_cross_refs(nodes)
 
 
 def row(cause, consequences, cc, safeguards, c, base_l, recs=()):
@@ -842,15 +1413,170 @@ def _nearest_line(lines, box, limit=0.1):
     return best
 
 
-def _isolation_valves(ctx):
-    return [v for v in ctx.valves if any(str(v.get("type") or "").lower().startswith(kind) for kind in _ISOLATION)]
+def _valve_size_inches(valve):
+    """Nominal size of a piping valve, when OCR read one beside the code."""
+    return _line_size_inches({"size": valve.get("size")}) if valve.get("size") else None
+
+
+def _is_root_or_drain_valve(ctx, valve):
+    """Instrument root valves and piping drain valves must not be deviation causes.
+
+    A root valve sits on the instrument tap (beside PI/PT/TI/LT/…). A drain valve sits on a
+    drain branch or as a small bore dump under the line / equipment — neither blocks main flow.
+    """
+    kind = str(valve.get("type") or "").lower()
+    code = str(valve.get("code") or valve.get("tag") or "").upper()
+    # Needle valves are root / bleed / drain by piping practice.
+    if kind.startswith("needle") or code.startswith("VN"):
+        return True
+    if "DRAIN" in code or "BLEED" in code or "VENT" in code or "ROOT" in code:
+        return True
+    box = valve.get("box")
+    if not box:
+        return False
+    nearest = _nearest_line(ctx.lines, box, limit=0.1)
+    if nearest and _off_process_line(nearest):
+        return True
+    inches = _valve_size_inches(valve)
+    # Beside a measuring / indicating instrument and closer to it than to main equipment → root.
+    best_inst = None
+    for inst in ctx.instruments:
+        if not inst.get("box"):
+            continue
+        if inst.get("category") in ("control_valve", "relief"):
+            continue
+        letters = str(inst.get("letters") or "")
+        # Controllers / trips are not the tap the root valve serves; indicators and transmitters are.
+        if inst.get("category") not in ("indicator", "transmitter", "element", "alarm", "switch", None, ""):
+            if letters[1:2] not in ("I", "T", "E", "A", "S") and not letters.endswith(("I", "T", "E")):
+                continue
+        gap = _box_gap(box, inst["box"])
+        if gap <= 0.08 and (best_inst is None or gap < best_inst[0]):
+            best_inst = (gap, inst)
+    if best_inst:
+        eq_gap = min(
+            (_box_gap(box, eq["box"]) for eq in _large_equipment(ctx) if eq.get("box")),
+            default=999.0,
+        )
+        cv_gap = min(
+            (_box_gap(box, cv["box"]) for cv in ctx.find(cats=("control_valve",)) if cv.get("box")),
+            default=999.0,
+        )
+        if best_inst[0] < min(eq_gap, cv_gap) - 0.005:
+            return True
+        if inches is not None and inches <= 1.0:
+            return True
+    # Small bore under equipment = typical piping drain, not a process block valve.
+    if inches is not None and inches <= 1.0:
+        for eq in _large_equipment(ctx):
+            if not eq.get("box"):
+                continue
+            if _box_gap(box, eq["box"]) <= 0.18 and _cy({"box": box}) >= _cy(eq) + 0.01:
+                return True
+    return False
+
+
+def _isolation_valves(ctx, steady=True):
+    """Main-line isolation valves only. steady=True drops flare/vent/drain/PSV, root and drain valves."""
+    valves = [v for v in ctx.valves if any(str(v.get("type") or "").lower().startswith(kind) for kind in _ISOLATION)]
+    if steady:
+        valves = [v for v in valves
+                  if not _on_off_process(ctx, v) and not _is_root_or_drain_valve(ctx, v)]
+    return valves
+
+
+def _box_gap(a, b):
+    if not a or not b:
+        return 999.0
+    ax, ay = (a[0] + a[2]) / 2, (a[1] + a[3]) / 2
+    bx, by = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+    return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+
+
+def _on_off_process(ctx, item):
+    """True when a valve or instrument sits on a flare, vent, drain or PSV branch.
+
+    Those paths are not live during steady-state operation, so closing them must not be
+    written as the same deviation as closing a valve on the main process supply / outlet.
+    """
+    box = item.get("box") if isinstance(item, dict) else None
+    if not box:
+        return False
+    # Nearest drawn line decides: if that line is flare/vent/drain/SV, the valve is off-process.
+    nearest = _nearest_line(ctx.lines, box, limit=0.12)
+    if nearest and _off_process_line(nearest):
+        return True
+    # Drain / flare tees: FSV often sits on the branch while a process line is also close —
+    # any nearby off-process line still means the component is not a process cause.
+    for line in ctx.off_process_lines:
+        boxes = line.get("boxes") or ([line["box"]] if line.get("box") else [])
+        if boxes and _near_any(box, boxes, 0.15):
+            return True
+    # Beside a drain / flare / vent / blowdown connector.
+    for conn in ctx.connectors:
+        text = (conn.get("description") or "").upper()
+        if not any(w in text for w in ("FLARE", "VENT", "DRAIN", "BLOWDOWN", "BLOW DOWN")):
+            continue
+        if conn.get("box") and _box_gap(box, conn["box"]) <= 0.14:
+            return True
+    proc = _nearest_line(ctx.process_lines, box, limit=0.12)
+    proc_gap = _box_gap(box, proc.get("box") if proc else None) if proc else 999.0
+    # Inlet / outlet isolation drawn beside a PSV, closer to the PSV than to any process line.
+    for inst in ctx.instruments:
+        letters = str(inst.get("letters") or "")
+        is_relief = (
+            inst.get("category") == "relief"
+            or letters in _RELIEF_LETTERS
+            or letters.startswith(("PSV", "PZV", "PRV", "PSE"))
+        )
+        if not is_relief or not inst.get("box"):
+            continue
+        psv_gap = _box_gap(box, inst["box"])
+        if psv_gap <= 0.09 and psv_gap < proc_gap - 0.01:
+            return True
+    code = str(item.get("code") or item.get("tag") or "").upper()
+    if any(token in code for token in ("BDV", "VENT", "DRAIN", "FLARE", "BLOWDOWN")):
+        return True
+    return False
+
+
+def _skip_deviation_cause(ctx, item):
+    """Flare / drain / vent piping and instrument root valves must not be deviation causes."""
+    if not item:
+        return True
+    if _on_off_process(ctx, item):
+        return True
+    if _is_root_or_drain_valve(ctx, item):
+        return True
+    return False
+
+
+def _process_check_devices(ctx, eq=None):
+    """Check valves / FSVs on live process piping only — not drain, flare or root."""
+    found = []
+    for inst in ctx.instruments:
+        if not _is_check_device(inst):
+            continue
+        if _skip_deviation_cause(ctx, inst):
+            continue
+        if eq is not None and not _same_equipment(ctx, inst, eq):
+            continue
+        found.append(inst)
+    if found:
+        return found
+    for valve in ctx.valves_of("check"):
+        if _skip_deviation_cause(ctx, valve):
+            continue
+        found.append(valve)
+    return found
 
 
 def _isolation_cause(ctx, box, anchor):
-    """Name the isolation valves next to one component instead of a generic valve."""
-    valves = [v for v in _isolation_valves(ctx) if v.get("box") and box and _near_any(v["box"], [box], 0.08)]
+    """Name main-line isolation valves with line numbers — not instrument root valves or piping drains."""
+    valves = [v for v in _isolation_valves(ctx, steady=True)
+              if v.get("box") and box and _near_any(v["box"], [box], 0.08)]
     if valves:
-        return f"Inadvertent closure of {ctx.names(valves)} on the line through {anchor}."
+        return f"Inadvertent closure of {_valve_labels(ctx, valves)} through {anchor}."
     line = _nearest_line(ctx.process_lines, box)
     if line:
         return (f"Inadvertent closure of an isolation valve on {line['tag']} "
@@ -880,16 +1606,101 @@ def _place_row(node, deviation, cause, consequences, safeguards, c, base_l, recs
     found.setdefault("rows", []).append(row(cause, consequences, "A" if c < 4 else "S", safeguards, c, base_l, recs))
 
 
-def _instrument_duty(inst):
+def _is_level_valve(inst):
+    letters = str(inst.get("letters") or "")
+    return letters[:1] == "L" and inst.get("category") == "control_valve"
+
+
+def _level_vessel_for(ctx, cv, fallback=None):
+    """The vessel whose liquid level this LV holds — the drum upstream of the liquid outlet valve."""
+    owner = _owner(ctx, cv)
+    if owner and owner.get("kind") in ("vessel", "tank"):
+        return owner
+    up = _nearest_large(ctx, cv.get("box"), -1)
+    if up and up.get("kind") in ("vessel", "tank"):
+        return up
+    if fallback and fallback.get("kind") in ("vessel", "tank"):
+        return fallback
+    for eq in _large_equipment(ctx):
+        if eq.get("kind") in ("vessel", "tank"):
+            return eq
+    return fallback or up
+
+
+def _lv_purpose(vessel):
+    """What an LV is for: hold liquid level by releasing liquid from the bottom outlet."""
+    name = _equip_name(vessel, "the vessel") if isinstance(vessel, dict) else str(vessel or "the vessel")
+    return f"hold the liquid level in {name} by releasing liquid from the bottom / liquid outlet"
+
+
+def _lv_closed_consequence(ctx, cv, vessel):
+    """LV fails closed → liquid cannot leave → high level → carryover to the vapour outlet (not the liquid line)."""
+    tag = cv.get("tag") or "the level valve"
+    vessel_name = _equip_name(vessel, "the vessel")
+    vapour_dest = None
+    for conn in ctx.dests:
+        text = _conn_name(conn).lower()
+        if any(word in text for word in ("gas", "vapour", "vapor", "fuel", "flare", "compress", "scrubber", "header")):
+            vapour_dest = _place_name(_conn_name(conn))
+            break
+    if not vapour_dest:
+        down = _nearest_large(ctx, (vessel or {}).get("box") if vessel else cv.get("box"), 1)
+        if down and down.get("tag") != (vessel or {}).get("tag"):
+            vapour_dest = _equip_name(down, ctx.dest_text())
+        else:
+            vapour_dest = "the vapour / gas outlet downstream"
+    return (
+        f"{tag} is the level control valve on the liquid outlet of {vessel_name}; its purpose is to {_lv_purpose(vessel)}. "
+        f"When {tag} fails closed, liquid can no longer leave {vessel_name}, the level rises, "
+        f"and liquid carries over into the vapour outlet toward {vapour_dest}. "
+        f"Downstream gas users can see liquid."
+    )
+
+
+def _lv_open_consequence(ctx, cv, vessel):
+    """LV fails open → liquid dumps → low level → gas blows through the liquid outlet."""
+    tag = cv.get("tag") or "the level valve"
+    vessel_name = _equip_name(vessel, "the vessel")
+    liquid_dest = None
+    for conn in ctx.dests:
+        text = _conn_name(conn).lower()
+        if any(word in text for word in ("separat", "liquid", "oil", "condensate", "water", "drain")):
+            liquid_dest = _place_name(_conn_name(conn))
+            break
+    if not liquid_dest:
+        liquid_dest = ctx.dest_text()
+    effect = (
+        f"{tag} is the level control valve on the liquid outlet of {vessel_name}; its purpose is to {_lv_purpose(vessel)}. "
+        f"When {tag} fails open, the liquid inventory leaves {vessel_name}, the liquid seal is lost, "
+        f"and gas blows through the liquid outlet toward {liquid_dest}."
+    )
+    # Blow-through travels on the liquid outlet line — name that PFD stream when known.
+    return _cons_related(ctx, cv.get("box"), (vessel or {}).get("tag") or tag, effect.rstrip("."))
+
+
+def _instrument_duty(inst, ctx=None):
     """What this instrument is on the drawing to do, from its ISA letters."""
     letters = inst.get("letters") or ""
     meaning = kb.describe_instrument(letters) if letters else (inst.get("tag") or "instrument")
     category = inst.get("category")
+    if category == "safety" or letters.startswith("FSV") or _is_check_device(inst):
+        if ctx is not None:
+            return _check_purpose(ctx, inst)
+        return "stop reverse flow (check valve / flow safety valve)"
     if category == "controller":
         point = f" at {inst['set_point']}" if inst.get("set_point") else ""
         return f"control the process ({meaning}{point})"
     if category == "control_valve":
         fail = {"FC": " and close on loss of air", "FO": " and open on loss of air", "FL": " and stay put on loss of air"}.get(inst.get("fail_action") or "", "")
+        if letters[:1] == "L":
+            vessel = _level_vessel_for(ctx, inst) if ctx is not None else None
+            return _lv_purpose(vessel) + fail
+        if letters[:1] == "P":
+            return f"let down / control pressure ({meaning}{fail})"
+        if letters[:1] == "F":
+            return f"control flow ({meaning}{fail})"
+        if letters[:1] == "T":
+            return f"control temperature ({meaning}{fail})"
         return f"regulate the process ({meaning}{fail})"
     if category == "trip":
         return f"trip the process ({meaning})"
@@ -911,9 +1722,16 @@ def _instrument_deviation(inst):
     high = "H" in rest
     low = "L" in rest and not high
     var = letters[:1]
+    if _is_check_device(inst):
+        return "Reverse Flow"
     if inst.get("category") == "relief":
         return "High Pressure"
     if inst.get("category") == "control_valve":
+        # An LV holds level: closed → high level, open → low level. Not a flow deviation.
+        if var == "L":
+            return "High Level" if inst.get("fail_action") != "FO" else "Low Level"
+        if var == "P":
+            return "No / Less Flow" if inst.get("fail_action") == "FC" else "More Flow / High Pressure"
         return "No / Less Flow" if inst.get("fail_action") == "FC" else "More Flow"
     return {
         "F": "No / Less Flow" if low or not high else "More Flow",
@@ -926,6 +1744,11 @@ def _instrument_deviation(inst):
 def _instrument_effect(inst, duty):
     category = inst.get("category")
     tag = inst.get("tag") or "the instrument"
+    if _is_check_device(inst) or category == "safety":
+        return (
+            f"{tag} no longer {duty}. Reverse flow is no longer stopped, "
+            f"so upstream equipment can see backflow, overpressure or contamination."
+        )
     if category == "trip":
         return f"{tag} no longer {duty}. The condition it was meant to stop can continue."
     if category == "alarm":
@@ -964,31 +1787,200 @@ def _same_variable_safeguards(ctx, inst):
     return out
 
 
+def _place_check_rows(node, ctx, inst):
+    """Write FSV / check causes using the phase of the line the device sits on."""
+    if _skip_deviation_cause(ctx, inst) or _is_normally_open(inst):
+        return
+    tag = _valve_label(ctx, inst)
+    owner = _owner(ctx, inst)
+    up_eq, _, _, _ = _check_neighbors(ctx, inst)
+    phase = _check_phase(ctx, inst)
+    _place_row(
+        node, "Reverse Flow",
+        _cause_ltr(ctx, inst.get("box"), tag, f"{tag} sticks open (fails to seat)."),
+        [_check_stuck_open_consequence(ctx, inst)],
+        relief_safeguards(ctx, owner) + trip_safeguards(ctx, "P", "H", owner)
+        + (trip_safeguards(ctx, "L", "H", up_eq) if phase == "liquid" and up_eq else []),
+        4, 2,
+    )
+    # Liquid outlet of a vessel: stuck closed backs liquid into the drum → high level.
+    if phase == "liquid" and up_eq and up_eq.get("kind") in ("vessel", "tank"):
+        closed_dev, closed_sg, sev = "High Level", trip_safeguards(ctx, "L", "H", up_eq), 4
+    elif phase == "liquid":
+        closed_dev, closed_sg, sev = "No / Less Flow", trip_safeguards(ctx, "L", "H", up_eq) + trip_safeguards(ctx, "P", "L", owner), 3
+    else:
+        closed_dev, closed_sg, sev = "No / Less Flow", trip_safeguards(ctx, "P", "L", owner), 3
+    _place_row(
+        node, closed_dev,
+        _cause_ltr(ctx, inst.get("box"), tag, f"{tag} sticks closed (fails to open)."),
+        [_check_stuck_closed_consequence(ctx, inst)],
+        closed_sg, sev, 2,
+    )
+
+
 def _instrument_row(node, ctx, inst):
-    duty = _instrument_duty(inst)
+    duty = _instrument_duty(inst, ctx)
     tag = inst.get("tag") or "instrument"
     line = _nearest_line(ctx.lines, inst.get("box"), limit=None)
     where = f" on {line['tag']}" if line else ""
+    if _is_check_device(inst):
+        _place_check_rows(node, ctx, inst)
+        return
+    if _is_level_valve(inst):
+        vessel = _level_vessel_for(ctx, inst)
+        closed = _lv_closed_consequence(ctx, inst, vessel)
+        opened = _lv_open_consequence(ctx, inst, vessel)
+        loss_sg = trip_safeguards(ctx, "L", "H", vessel)
+        open_sg = trip_safeguards(ctx, "L", "L", vessel)
+        _place_row(node, "High Level",
+                   _cause_ltr(ctx, inst.get("box"), tag, f"{tag} fails closed."),
+                   [closed], loss_sg, 4, 3)
+        _place_row(node, "Low Level",
+                   _cause_ltr(ctx, inst.get("box"), tag, f"{tag} fails open."),
+                   [opened], open_sg, 5, 3)
+        return
     _place_row(
         node, _instrument_deviation(inst),
         f"If {tag} faults{where}, it can no longer {duty}.",
         [_instrument_effect(inst, duty)],
         _same_variable_safeguards(ctx, inst),
-        4 if inst.get("category") in ("trip", "relief", "control_valve") else 3, 2,
+        4 if inst.get("category") in ("trip", "relief", "control_valve", "safety") else 3, 2,
     )
 
 
+def _cy(item):
+    box = item.get("box") or [0, 0, 0, 0]
+    return (box[1] + box[3]) / 2
+
+
+def _flow_to_upstream_heading(flow):
+    """Map a line flow compass letter to the geometric side where upstream sits (-1 left/up, +1 right/down)."""
+    flow = str(flow or "").upper()
+    if flow == "E":
+        return -1  # flows east → upstream is west (left)
+    if flow == "W":
+        return 1
+    if flow == "S":
+        return -1  # flows south → upstream is north (above); x-fallback uses left
+    if flow == "N":
+        return 1
+    return None
+
+
+def _nearest_process_line(ctx, box):
+    if not box:
+        return None
+    cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+    best, dist = None, None
+    for line in ctx.process_lines:
+        boxes = line.get("boxes") or ([line["box"]] if line.get("box") else [])
+        for candidate in boxes:
+            lx, ly = (candidate[0] + candidate[2]) / 2, (candidate[1] + candidate[3]) / 2
+            gap = ((lx - cx) ** 2 + (ly - cy) ** 2) ** 0.5
+            if dist is None or gap < dist:
+                best, dist = line, gap
+    return best
+
+
+def _heading_at(ctx, box):
+    """Upstream geometric heading at this point from the nearest pipe arrow (local, not sheet-wide)."""
+    line = _nearest_process_line(ctx, box)
+    if line:
+        local = _flow_to_upstream_heading(line.get("flow"))
+        if local is not None:
+            return local
+    return getattr(ctx, "upstream_side", -1)
+
+
+def _flows_from_to(line, source, dest):
+    """True when the arrow on this line runs from source equipment to dest equipment."""
+    if not line or not source or not dest:
+        return None
+    flow = str(line.get("flow") or "").upper()
+    if not flow:
+        return None
+    sx, sy = _cx(source), _cy(source)
+    dx, dy = _cx(dest), _cy(dest)
+    if flow == "E":
+        return sx < dx - 0.005
+    if flow == "W":
+        return sx > dx + 0.005
+    if flow == "S":
+        return sy < dy - 0.005
+    if flow == "N":
+        return sy > dy + 0.005
+    return None
+
+
+def _line_between(ctx, left, right):
+    """Process line that sits between two equipment boxes (same band)."""
+    if not left or not right or not left.get("box") or not right.get("box"):
+        return None
+    x0, x1 = sorted([_cx(left), _cx(right)])
+    y0, y1 = sorted([_cy(left), _cy(right)])
+    mid_y = (_cy(left) + _cy(right)) / 2
+    best, dist = None, None
+    for line in ctx.process_lines:
+        boxes = line.get("boxes") or ([line["box"]] if line.get("box") else [])
+        for candidate in boxes:
+            lx = (candidate[0] + candidate[2]) / 2
+            ly = (candidate[1] + candidate[3]) / 2
+            if lx < x0 - 0.05 or lx > x1 + 0.05:
+                continue
+            if abs(ly - mid_y) > max(0.12, (y1 - y0) + 0.08):
+                continue
+            gap = abs(ly - mid_y)
+            if dist is None or gap < dist:
+                best, dist = line, gap
+    return best
+
+
+def _feeders_of(ctx, target):
+    """Equipment that the pipe arrows show feeding this equipment (e.g. HAP-2850 → scrubber)."""
+    if not target:
+        return []
+    feeders = []
+    for eq in _large_equipment(ctx):
+        if eq.get("tag") == target.get("tag"):
+            continue
+        line = _line_between(ctx, eq, target)
+        verdict = _flows_from_to(line, eq, target) if line else None
+        if verdict is True:
+            feeders.append(eq)
+            continue
+        if verdict is False:
+            continue
+        # No arrow between them: a FROM connector that names this feeder near the target counts.
+        for conn in ctx.sources:
+            named = str(conn.get("equipment") or "").upper()
+            if named and named == str(eq.get("tag") or "").upper():
+                if abs(_cy(conn) - _cy(target)) < 0.2 or abs(_cy(conn) - _cy(eq)) < 0.2:
+                    feeders.append(eq)
+                    break
+    return feeders
+
+
 def _nearest_large(ctx, box, side=0):
-    """side -1 is upstream along the pipe arrows, +1 is downstream, 0 is the nearest."""
+    """side -1 is upstream along the local pipe arrow, +1 is downstream, 0 is the nearest."""
     items = _large_equipment(ctx)
     if not items:
         return None
     if not box:
         return items[0]
     cx = (box[0] + box[2]) / 2
+    cy = (box[1] + box[3]) / 2
     if side == 0:
-        return min(items, key=lambda e: abs(_cx(e) - cx))
-    heading = getattr(ctx, "upstream_side", -1) * side
+        return min(items, key=lambda e: abs(_cx(e) - cx) + abs(_cy(e) - cy))
+    heading = _heading_at(ctx, box) * side
+    line = _nearest_process_line(ctx, box)
+    flow = str((line or {}).get("flow") or "").upper()
+    # Vertical run: pick upstream/downstream by y along the arrow.
+    if flow in ("N", "S"):
+        if heading < 0:
+            pool = [e for e in items if _cy(e) < cy - 0.005]
+            return max(pool, key=_cy) if pool else None
+        pool = [e for e in items if _cy(e) > cy + 0.005]
+        return min(pool, key=_cy) if pool else None
     if heading < 0:
         pool = [e for e in items if _cx(e) < cx - 0.005]
         return pool[-1] if pool else None
@@ -1004,14 +1996,21 @@ def _downstream_drum(ctx, box):
     if not box:
         return drums[0]
     cx = (box[0] + box[2]) / 2
-    heading = getattr(ctx, "upstream_side", -1)
-    # Downstream drums sit with the flow (opposite of upstream_side).
-    if heading < 0:
+    cy = (box[1] + box[3]) / 2
+    heading = _heading_at(ctx, box)
+    line = _nearest_process_line(ctx, box)
+    flow = str((line or {}).get("flow") or "").upper()
+    if flow in ("N", "S"):
+        if heading < 0:
+            ahead = [item for item in drums if _cy(item) >= cy - 0.02]
+        else:
+            ahead = [item for item in drums if _cy(item) <= cy + 0.02]
+    elif heading < 0:
         ahead = [item for item in drums if _cx(item) >= cx - 0.02]
     else:
         ahead = [item for item in drums if _cx(item) <= cx + 0.02]
     pool = ahead or drums
-    return min(pool, key=lambda item: abs(_cx(item) - cx))
+    return min(pool, key=lambda item: abs(_cx(item) - cx) + abs(_cy(item) - cy))
 
 
 def _equip_name(eq, fallback):
@@ -1024,14 +2023,17 @@ def _equip_name(eq, fallback):
 
 
 def _upstream_side(ctx):
-    """-1 when flow runs left→right (upstream is left). +1 when arrows run the other way."""
+    """Sheet default: -1 when most arrows run left→right. Prefer arrows over connector guesses."""
     votes = Counter()
     for line in getattr(ctx, "process_lines", None) or []:
         flow = str(line.get("flow") or "").upper()
+        weight = 3 if line.get("flow_from") == "arrow" else 1 if line.get("flow") else 0
+        if not weight:
+            continue
         if flow == "E":
-            votes[-1] += 2 if line.get("flow_from") == "arrow" else 1
+            votes[-1] += weight
         elif flow == "W":
-            votes[1] += 2 if line.get("flow_from") == "arrow" else 1
+            votes[1] += weight
     if votes:
         return votes.most_common(1)[0][0]
     sources = getattr(ctx, "sources", None) or []
@@ -1044,13 +2046,13 @@ def _upstream_side(ctx):
 
 
 def _line_toward(ctx, box, side):
-    """Process line on the upstream (side -1) or downstream (side +1) side, using pipe arrows."""
+    """Indicated node piping on the upstream (side -1) or downstream (side +1) side."""
     if not box:
         return None
     cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
-    heading = getattr(ctx, "upstream_side", -1) * side
+    heading = _heading_at(ctx, box) * side
     best, dist = None, None
-    for line in ctx.process_lines:
+    for line in _node_piping(ctx) or ctx.process_lines:
         boxes = line.get("boxes") or ([line["box"]] if line.get("box") else [])
         for candidate in boxes:
             lx, ly = (candidate[0] + candidate[2]) / 2, (candidate[1] + candidate[3]) / 2
@@ -1081,7 +2083,7 @@ def _psig_text(value):
 
 
 def _conditions_at(ctx, tag):
-    """Design and operating P/T from the P&ID block and the PFD heat and material balance."""
+    """Design and operating P/T from the P&ID, Step 3 mapped ops, and the PFD balance."""
     out = {}
     tag_u = str(tag or "").upper()
     if not tag_u:
@@ -1094,6 +2096,24 @@ def _conditions_at(ctx, tag):
             if design.get(key) is not None:
                 out[key] = design[key]
         break
+    # Line tag: use Step 3 line operating parameters from the PFD stream map.
+    line_ops = (getattr(ctx, "line_operating", None) or {}).get(tag) or (
+        getattr(ctx, "line_operating", None) or {}
+    ).get(tag_u)
+    if line_ops:
+        if line_ops.get("p_op") is not None and out.get("p_op") is None:
+            out["p_op"] = line_ops["p_op"]
+            out["p_stream"] = line_ops.get("pfd_stream")
+        if line_ops.get("t_op") is not None and out.get("t_op") is None:
+            out["t_op"] = line_ops["t_op"]
+            out["t_stream"] = line_ops.get("pfd_stream")
+    mapped = (getattr(ctx, "equipment_operating", None) or {}).get(tag_u) or {}
+    if mapped.get("p_op") is not None and out.get("p_op") is None:
+        out["p_op"] = mapped["p_op"]
+        out["p_stream"] = mapped.get("p_stream") or mapped.get("pfd_stream")
+    if mapped.get("t_op") is not None and out.get("t_op") is None:
+        out["t_op"] = mapped["t_op"]
+        out["t_stream"] = mapped.get("t_stream") or mapped.get("pfd_stream")
     for key, info in (getattr(ctx, "pfd_conditions", None) or {}).items():
         if key.upper() != tag_u and key.upper() not in tag_u and tag_u not in key.upper():
             continue
@@ -1145,45 +2165,63 @@ def _overpressure_effect(ctx, here, upstream=None):
 
 
 def _outlet_blockers(ctx, eq):
-    """Valves that close the outlet of this equipment and trap pressure inside it."""
+    """Steady-state process valves that close the outlet and trap pressure — not PSV / flare / drain / root."""
     named = []
     eq_box = eq.get("box")
     for cv in ctx.find(cats=("control_valve",)):
+        if _skip_deviation_cause(ctx, cv):
+            continue
         if _same_equipment(ctx, cv, eq):
             tag = cv.get("tag")
-            if tag and tag not in named:
-                named.append(tag)
+            if not tag:
+                continue
+            label = _valve_label(ctx, cv)
+            if label not in named and not any(tag == str(n).split(" on ")[0] for n in named):
+                named.append(label)
     heading = getattr(ctx, "upstream_side", -1)
-    for valve in _isolation_valves(ctx):
+    for valve in _isolation_valves(ctx, steady=True):
         code = valve.get("code")
-        if not code or code in named or not valve.get("box") or not eq_box:
+        if not code or not valve.get("box") or not eq_box:
+            continue
+        label = _valve_label(ctx, valve)
+        if label in named or any(code == str(n).split(" on ")[0] for n in named):
             continue
         # Outlet side is downstream of the equipment along the flow arrows.
         on_outlet = (_cx(valve) - _cx(eq)) * (-heading) >= -0.02
         if on_outlet and _near_any(valve["box"], [eq_box], 0.16):
-            named.append(code)
+            named.append(label)
     for inst in ctx.instruments:
+        if _skip_deviation_cause(ctx, inst):
+            continue
         letters = str(inst.get("letters") or "")
         head = str(inst.get("tag") or "").split("-")[0]
         if letters not in _SHUTDOWN_LETTERS and head not in _SHUTDOWN_LETTERS:
             continue
+        # Blowdown / flare shutdown valves are not a steady-state blocked-outlet cause.
+        if letters in ("BDV",) or head in ("BDV",):
+            continue
         if not _same_equipment(ctx, inst, eq):
             continue
         tag = inst.get("tag")
-        if tag and tag not in named:
-            named.append(tag)
+        if not tag:
+            continue
+        label = _valve_label(ctx, inst)
+        if label not in named and not any(tag == str(n).split(" on ")[0] for n in named):
+            named.append(label)
     return named
 
 
 def _blocked_outlet_cause(ctx, eq, heater=False):
-    """Name the particular valve that closes and blocks the outlet."""
+    """Name the particular valve (with line number) that closes and blocks the outlet."""
     blockers = _outlet_blockers(ctx, eq)
     tag = eq.get("tag") or "the equipment"
     if blockers:
-        if len(blockers) == 1:
-            cause = f"Blocked outlet: {blockers[0]} closed on the outlet of {tag}"
-        else:
-            cause = f"Blocked outlet: {', '.join(blockers[:-1])} or {blockers[-1]} closed on the outlet of {tag}"
+        # Blockers are already valve std + line labels where known.
+        listed = _valve_labels(ctx, blockers) if blockers and isinstance(blockers[0], dict) else (
+            blockers[0] if len(blockers) == 1
+            else f"{', '.join(blockers[:-1])} or {blockers[-1]}"
+        )
+        cause = f"Blocked outlet: {listed} closed on the outlet of {tag}"
     else:
         outlet = _line_toward(ctx, eq.get("box"), 1)
         if outlet:
@@ -1199,6 +2237,11 @@ def _blocked_outlet_cause(ctx, eq, heater=False):
 def _cause_ltr(ctx, box, anchor, failure):
     """Name the upstream line that reaches this point, following the pipe arrows."""
     failure = str(failure).strip().rstrip(".")
+    # Valve std already carries its line number — do not repeat another line tag.
+    if re.search(r"\bon\s+\d", failure, re.I) or "line not read" in failure.lower():
+        if anchor and str(anchor) not in failure:
+            return f"{failure} at {anchor}."
+        return f"{failure}."
     upstream = _line_toward(ctx, box, -1)
     if upstream and upstream["tag"] not in failure:
         return f"{failure} on {upstream['tag']} at {anchor}."
@@ -1317,6 +2360,9 @@ def _specific_instrument_row(node, ctx, inst):
     elif cat == "switch":
         deviation, cause = "Other", f"{tag} fails to switch on {limit or word} {word} at {here}."
         cons = [f"The {limit or 'set'} {word} action at {here} does not happen, so {fluid} stays on the path toward {down}."]
+    elif _is_check_device(inst) or cat == "safety" or letters.startswith("FSV"):
+        _place_check_rows(node, ctx, inst)
+        return
     else:
         return
     _place_row(node, deviation, _cause_ltr(ctx, inst.get("box"), tag, cause),
@@ -1325,10 +2371,14 @@ def _specific_instrument_row(node, ctx, inst):
 
 
 def _component_rows(node, ctx):
-    """One specific cause for each controlling, trip, alarm or relief instrument on this node."""
+    """One specific cause for each controlling, trip, alarm, relief or check device on this node."""
     for inst in _reading_order(ctx.instruments):
-        if inst.get("category") in ("indicator", "element", "relay", "other", "control_valve", None, ""):
+        if _skip_deviation_cause(ctx, inst):
             continue
+        if inst.get("category") in ("indicator", "element", "relay", "other", "control_valve", None, ""):
+            # FSV was historically "other"; still write it when letters say check valve.
+            if not _is_check_device(inst):
+                continue
         if inst.get("category") == "control_valve":
             continue
         mentioned = inst.get("tag") or ""
@@ -1337,10 +2387,10 @@ def _component_rows(node, ctx):
         _specific_instrument_row(node, ctx, inst)
 
 
-def _pinpoint_node(node, ctx, color=None, color_segments=None):
+def _pinpoint_node(node, ctx, color=None):
     """Name each component by its duty, and write the node description from the start and the equipment."""
     _component_rows(node, ctx)
-    node["boundary"] = _node_description(ctx, color, color_segments=color_segments)
+    node["boundary"] = _node_description(ctx, color)
     node["design_intent"] = _overall_intent(ctx)
     by_spec = {}
     for line in ctx.lines:
@@ -1389,12 +2439,16 @@ def _pinpoint_node(node, ctx, color=None, color_segments=None):
     _fill_recommendations(node, ctx)
 
 
-def equipment_node(ctx, eq, nid):
+def equipment_node(ctx, eq, nid, done_cvs=None):
+    """Write deviations for this equipment, walking its control valves once along the flow."""
     tag, kind = eq["tag"], eq["kind"]
     d = eq["design"]
     label = KIND_LABEL.get(kind, "equipment")
     desc = eq["description"] or label.capitalize()
+    done_cvs = done_cvs if done_cvs is not None else set()
     cvs = [item for item in ctx.find(cats=("control_valve",)) if _same_equipment(ctx, item, eq)]
+    # Along the pipe arrows: upstream end first, then toward the outlet.
+    cvs = _order_along_flow(ctx, cvs, eq) if cvs else []
     cv = cvs[0]["tag"] if cvs else None
     sev_loc = 5 if ctx.hydrocarbon else 3
     p_des, t_des = d.get("p_des"), d.get("t_des")
@@ -1415,43 +2469,81 @@ def equipment_node(ctx, eq, nid):
     if kind == "heater":
         supply_sg = supply_sg + skin_safeguards(ctx) + temp_trips
     closed_rows, open_rows = [], []
-    for item in sorted(cvs, key=lambda valve: _cx(valve)):
+    level_high_rows, level_low_rows = [], []
+    for item in cvs:
+        # Flare / vent / drain / root valves are not steady-state process deviation causes.
+        if _skip_deviation_cause(ctx, item):
+            continue
         name = item["tag"]
+        if name.upper() in done_cvs:
+            continue
+        done_cvs.add(name.upper())
         cv_var = str(item.get("letters") or "")[:1]
         drum = _downstream_drum(ctx, item.get("box")) or eq
         drum_name = _equip_name(drum, tag)
         if cv_var == "L":
-            level_eq = eq if kind in ("vessel", "tank") else drum
+            # LV purpose is level control on the liquid outlet — not a flow deviation.
+            level_eq = _level_vessel_for(ctx, item, eq if kind in ("vessel", "tank") else drum)
             closed_sg = trip_safeguards(ctx, "L", "H", level_eq)
             open_sg = trip_safeguards(ctx, "L", "L", level_eq)
-            closed_effect = f"{name} fails closed on {tag}. The liquid outlet is blocked and the level rises. Liquid carries into the vapour outlet"
-            open_effect = f"{name} fails open on {tag}. Liquid leaves the vessel and the liquid seal is lost. Gas blows through the liquid outlet"
-        elif cv_var == "P":
+            level_high_rows.append(row(
+                _cause_ltr(ctx, item.get("box"), name, f"{name} fails closed."),
+                [_lv_closed_consequence(ctx, item, level_eq)],
+                "S", closed_sg, 4, 3,
+                [] if _has_strong(closed_sg) else [ctx.recs.add(
+                    f"Provide an independent high-high level trip (LSHH) on {_equip_name(level_eq, tag)}.")]))
+            level_low_rows.append(row(
+                _cause_ltr(ctx, item.get("box"), name, f"{name} fails open."),
+                [_lv_open_consequence(ctx, item, level_eq)],
+                "S", open_sg, 5, 3,
+                [] if _has_strong(open_sg) else [ctx.recs.add(
+                    f"Provide an independent low-low level trip (LSLL) on {_equip_name(level_eq, tag)} "
+                    f"to stop gas blow-through.")]))
+            continue
+        purpose = _cv_purpose(ctx, item, eq)
+        if cv_var == "P":
             closed_sg = trip_safeguards(ctx, "P", "L", eq)
             open_sg = relief_safeguards(ctx, drum) + trip_safeguards(ctx, "P", "H", drum)
-            closed_effect = f"{name} fails closed. Flow of {ctx.fluid} through {tag} stops"
-            open_effect = (
-                f"{name} fails open. Pressure letdown is lost. "
-                + _overpressure_effect(ctx, drum or drum_name, eq)
-            ).rstrip(".")
+            closed_effect = _with_valve_purpose(
+                ctx, item,
+                f"{name} fails closed, flow of {ctx.fluid} through {tag} stops",
+                purpose)
+            open_effect = _with_valve_purpose(
+                ctx, item,
+                f"{name} fails open, pressure letdown is lost. "
+                + _overpressure_effect(ctx, drum or drum_name, eq).rstrip("."),
+                purpose)
         elif kind == "heater":
             duty = f" ({d['duty_mmbtu_hr']} MMBtu/hr)" if d.get("duty_mmbtu_hr") else ""
             closed_sg = trip_safeguards(ctx, "P", "L", eq)
             open_sg = trip_safeguards(ctx, "T", "L", eq)
-            closed_effect = f"{name} fails closed. Flow of {ctx.fluid} through {tag} stops while the heater can stay energised"
-            open_effect = f"{name} fails open. Flow exceeds the heating capacity of {tag}{duty}. The outlet stays colder than intended and hydrate formation can follow"
+            closed_effect = _with_valve_purpose(
+                ctx, item,
+                f"{name} fails closed, flow of {ctx.fluid} through {tag} stops while the heater can stay energised",
+                purpose)
+            open_effect = _with_valve_purpose(
+                ctx, item,
+                f"{name} fails open, flow exceeds the heating capacity of {tag}{duty}. "
+                f"The outlet stays colder than intended and hydrate formation can follow",
+                purpose)
         else:
             closed_sg = trip_safeguards(ctx, "P", "L", eq)
             open_sg = trip_safeguards(ctx, "P", "L", eq)
-            closed_effect = f"{name} fails closed. Flow of {ctx.fluid} through {tag} stops"
-            open_effect = f"{name} fails open. Flow through {tag} rises above the intended rate"
+            closed_effect = _with_valve_purpose(
+                ctx, item,
+                f"{name} fails closed, flow of {ctx.fluid} through {tag} stops",
+                purpose)
+            open_effect = _with_valve_purpose(
+                ctx, item,
+                f"{name} fails open, flow through {tag} rises above the intended rate",
+                purpose)
         closed_rows.append(row(
             _cause_ltr(ctx, item.get("box"), name, f"{name} fails closed."),
-            [_cons_related(ctx, item.get("box"), tag, closed_effect)],
+            [_cons_related(ctx, item.get("box"), tag, closed_effect.rstrip("."))],
             "S" if kind == "heater" else "A", closed_sg, 4 if kind == "heater" else 3, 3))
         open_rows.append(row(
             _cause_ltr(ctx, item.get("box"), name, f"{name} fails open."),
-            [_cons_related(ctx, item.get("box"), tag, open_effect)],
+            [_cons_related(ctx, item.get("box"), tag, open_effect.rstrip("."))],
             "S" if kind == "heater" or cv_var == "P" else "A", open_sg, 4 if cv_var == "P" else 3, 2))
     rec_flow = []
     if kind in ("heater", "pump", "compressor") and not _has_strong(flow_trips) and not _has_strong(supply_sg):
@@ -1459,36 +2551,70 @@ def equipment_node(ctx, eq, nid):
         rec_flow.append(ctx.recs.add(
             f"Confirm that {panel} includes a low-flow / flow-proving permissive that trips {tag} on loss of flow; "
             f"if not, provide a low-low flow trip (FSLL)."))
-    devs.append(dev("No / Less Flow", [
+    flow_rows = [
         row(_cause_ltr(ctx, eq.get("box"), tag, "Loss of supply."),
             [_cons_related(ctx, eq.get("box"), tag, no_flow_cons.rstrip(".")),
              _cons_related(ctx, eq.get("box"), tag, f"Loss of {ctx.fluid} supply downstream of {tag}")],
             "S" if kind in ("heater", "pump", "compressor") else "A", supply_sg, 4 if kind == "heater" else 3, 3, rec_flow),
         *closed_rows,
-    ]))
+    ]
+    if flow_rows:
+        devs.append(dev("No / Less Flow", flow_rows))
     if open_rows:
         devs.append(dev("More Flow", open_rows))
+    if level_high_rows:
+        devs.append(dev("High Level", level_high_rows))
+    if level_low_rows:
+        devs.append(dev("Low Level", level_low_rows))
 
-    # ---- reverse flow
-    rev_rows = [row(_cause_ltr(ctx, eq.get("box"), tag, "Loss of upstream pressure while downstream stays pressurized."),
-                    [_cons_related(ctx, eq.get("box"), tag, f"Backflow of {ctx.fluid} through {tag} toward the upstream side")],
-                    "A", check_safeguards(ctx, eq), 3, 2,
-                    [] if check_safeguards(ctx, eq) else [ctx.recs.add(f"Provide a check valve on the outlet of {tag} to prevent reverse flow.")])]
-    if len(ctx.sources) >= 2:
+    # ---- reverse flow: check / FSV stuck open or pressure reversal — never normally open valves
+    checks_on_eq = [c for c in _process_check_devices(ctx, eq) if not _is_normally_open(c)]
+    rev_rows = []
+    for check in _reading_order(checks_on_eq):
+        ctag = _valve_label(ctx, check)
+        cause = _cause_ltr(ctx, check.get("box"), _check_tag(check), f"{ctag} sticks open (fails to seat).")
+        if not _reverse_flow_cause_ok(ctx, cause):
+            continue
+        rev_rows.append(row(
+            cause,
+            [_check_stuck_open_consequence(ctx, check)],
+            "S",
+            relief_safeguards(ctx, eq) + trip_safeguards(ctx, "P", "H", eq),
+            4, 2,
+        ))
+    rev_rows.append(row(
+        _cause_ltr(ctx, eq.get("box"), tag, "Loss of upstream pressure while downstream stays pressurized."),
+        [_cons_related(ctx, eq.get("box"), tag, f"Backflow of {ctx.fluid} through {tag} toward the upstream side")],
+        "A", check_safeguards(ctx, eq), 3, 2,
+        [] if check_safeguards(ctx, eq) else [ctx.recs.add(
+            f"Provide a check valve on the outlet of {tag} to prevent reverse flow.")]))
+    if len(ctx.sources) >= 2 and not checks_on_eq:
+        # One imbalance scenario — do not list normally open isolation valves as causes.
         names = " and ".join(c["description"] + (f" ({c['line']})" if c["line"] else "") for c in ctx.sources)
         checks = check_safeguards(ctx, eq)
         if checks:
             cause = f"One inlet check valve fails open while the sources {names} are at different pressures."
+            cons = [
+                "Higher-pressure source backflows into the lower-pressure source; "
+                "possible overpressure / contamination of upstream equipment."
+            ]
             safeguards = checks
             recs = []
         else:
-            cause = f"Pressure imbalance between inlet sources {names}; the sources join with no check valves shown on this P&ID."
+            cause = (
+                f"Pressure imbalance between inlet sources {names}; "
+                f"the sources join with no check valves shown on this P&ID."
+            )
+            cons = [
+                "Higher-pressure source backflows into the lower-pressure source; "
+                "possible overpressure / contamination of upstream equipment."
+            ]
             safeguards = []
-            recs = [ctx.recs.add(f"Verify on upstream drawings that check valves are provided on each incoming line ({names}) and that "
-                                 f"each source is rated for the maximum pressure of the other.")]
-        rev_rows.append(row(cause,
-            ["Higher-pressure source backflows into the lower-pressure source; possible overpressure / contamination of upstream equipment."],
-            "S", safeguards, 4, 2, recs))
+            recs = [ctx.recs.add(
+                f"Verify on upstream drawings that check valves are provided on each incoming line ({names}) and that "
+                f"each source is rated for the maximum pressure of the other.")]
+        if _reverse_flow_cause_ok(ctx, cause):
+            rev_rows.append(row(cause, cons, "S", safeguards, 4, 2, recs))
     devs.append(dev("Reverse Flow", rev_rows))
 
     # ---- high pressure
@@ -1582,20 +2708,33 @@ def equipment_node(ctx, eq, nid):
                       "A", controller_safeguard(ctx, "T"), 2, 2))
         devs.append(dev("Low Temperature", lt))
 
-    # ---- level (vessels / tanks)
-    if kind in ("vessel", "tank"):
+    # ---- level (vessels / tanks). LV rows already cover fail closed / open when an LV is on this vessel.
+    if kind in ("vessel", "tank") and not level_high_rows:
         lsh = trip_safeguards(ctx, "L", "H", eq)
         lsl = trip_safeguards(ctx, "L", "L", eq)
+        lv = next((item for item in cvs if str(item.get("letters") or "")[:1] == "L"), None)
+        if lv:
+            high_cause = _cause_ltr(ctx, lv.get("box"), lv["tag"], f"{lv['tag']} fails closed.")
+            high_cons = [_lv_closed_consequence(ctx, lv, eq)]
+            low_cause = _cause_ltr(ctx, lv.get("box"), lv["tag"], f"{lv['tag']} fails open.")
+            low_cons = [_lv_open_consequence(ctx, lv, eq)]
+        else:
+            high_cause = _cause_ltr(ctx, eq.get("box"), tag, f"The liquid outlet of {tag} is blocked.")
+            high_cons = [
+                f"Liquid cannot leave {tag}. The level rises and liquid carries over into the vapour outlet. "
+                f"Downstream gas users can see liquid."
+            ]
+            low_cause = _cause_ltr(ctx, eq.get("box"), tag, f"The liquid outlet of {tag} fails open or is left open.")
+            low_cons = [
+                f"Liquid leaves {tag}, the liquid seal is lost, and gas blows through the liquid outlet."
+            ]
         devs.append(dev("High Level", [row(
-            _cause_ltr(ctx, eq.get("box"), tag, f"The liquid outlet of {tag} is blocked."),
-            [_cons_related(ctx, eq.get("box"), tag, f"Liquid carries over from {tag} into the gas outlet")], "S",
-            lsh, 4, 3,
+            high_cause, high_cons, "S", lsh, 4, 3,
             [] if _has_strong(lsh) else [ctx.recs.add(f"Provide an independent high-high level trip (LSHH) on {tag}.")])]))
         devs.append(dev("Low Level", [row(
-            _cause_ltr(ctx, eq.get("box"), tag, f"The level valve on {tag} fails open."),
-            [_cons_related(ctx, eq.get("box"), tag, f"Liquid leaves {tag} and gas blows through the liquid outlet")],
-            "S", lsl, 5, 3,
-            [] if _has_strong(lsl) else [ctx.recs.add(f"Provide an independent low-low level trip (LSLL) on {tag} to prevent gas blow-by.")])]))
+            low_cause, low_cons, "S", lsl, 5, 3,
+            [] if _has_strong(lsl) else [ctx.recs.add(
+                f"Provide an independent low-low level trip (LSLL) on {tag} to prevent gas blow-by.")])]))
 
     # ---- composition
     wet_src = [l for l in ctx.process_lines if l["service"] in ("P", "R")]
@@ -1684,20 +2823,27 @@ def control_valve_node(ctx, cvs, nid, heater):
     if not vessel or vessel.get("kind") not in ("vessel", "tank"):
         vessel = drum if drum and drum.get("kind") in ("vessel", "tank") else vessel
     if var0 == "L":
+        vessel = _level_vessel_for(ctx, cv, vessel)
         loss_sg = trip_safeguards(ctx, "L", "H", vessel)
         open_sg = trip_safeguards(ctx, "L", "L", vessel)
+        vessel_name = _equip_name(vessel, up_name)
         devs.append(dev("High Level", [
             row(_cause_ltr(ctx, cv.get("box"), tag, f"{tag} fails closed."),
-                [_cons_related(ctx, cv.get("box"), up_name, f"The liquid outlet from {up_name} is blocked and liquid carries into the vapour outlet")],
-                "S", loss_sg, 4, 3),
+                [_lv_closed_consequence(ctx, cv, vessel)],
+                "S", loss_sg, 4, 3,
+                [] if _has_strong(loss_sg) else [ctx.recs.add(
+                    f"Provide an independent high-high level trip (LSHH) on {vessel_name}.")]),
             row(_cause_ltr(ctx, cv.get("box"), tag, _isolation_cause(ctx, cv.get("box"), tag)),
-                [_cons_related(ctx, cv.get("box"), up_name, f"The liquid outlet from {up_name} is blocked and liquid carries into the vapour outlet")],
+                [f"Isolation on the liquid outlet of {vessel_name} blocks liquid leaving. "
+                 f"The level rises and liquid carries over into the vapour outlet. Downstream gas users can see liquid."],
                 "S", loss_sg, 4, 2),
         ]))
         devs.append(dev("Low Level", [
             row(_cause_ltr(ctx, cv.get("box"), tag, f"{tag} fails open."),
-                [_cons_related(ctx, cv.get("box"), up_name, f"Liquid leaves {up_name} and gas blows through the liquid outlet")],
-                "S", open_sg, 5, 3),
+                [_lv_open_consequence(ctx, cv, vessel)],
+                "S", open_sg, 5, 3,
+                [] if _has_strong(open_sg) else [ctx.recs.add(
+                    f"Provide an independent low-low level trip (LSLL) on {vessel_name} to stop gas blow-through.")]),
         ]))
     else:
         loss_sg = trip_safeguards(ctx, "P", "L", drum)
@@ -1723,9 +2869,15 @@ def control_valve_node(ctx, cvs, nid, heater):
                 hp_cons.append(f"Outlet piping {down[0]['tag']} ({down[0]['rating']}, {down[0]['rating_psig']} psig) can be overpressured.")
         if heater:
             hp_cons.append(f"Flow through {heater['tag']} rises above its heating capacity and the outlet gas stays cold.")
-        more_rows = [row(_cause_ltr(ctx, cv.get("box"), tag, f"{tag} fails open."),
-                         [_cons_related(ctx, cv.get("box"), tag, hp_cons[0].rstrip("."))], "S",
-                         open_sg, 5, 3)]
+        more_rows = [row(
+            _cause_ltr(ctx, cv.get("box"), tag, f"{tag} fails open."),
+            [_cons_related(
+                ctx, cv.get("box"), tag,
+                _with_valve_purpose(
+                    ctx, cv,
+                    f"{tag} fails open, letdown between {up_name} and {down_name} is lost. {pressure_cons}",
+                    _cv_purpose(ctx, cv)).rstrip("."))],
+            "S", open_sg, 5, 3)]
         if bypass:
             more_rows.append(row(
                 f"{tag} bypass globe valve {ctx.names(bypass[:1])} opened in error or left open after maintenance.",
@@ -1739,11 +2891,27 @@ def control_valve_node(ctx, cvs, nid, heater):
             [_cons_related(ctx, cv.get("box"), tag, pressure_cons)], "S", open_sg, 5, 2))
         devs.append(dev("More Flow / High Pressure", more_rows))
 
-    devs.append(dev("Reverse Flow", [row(
+    rev_cv_rows = []
+    for check in _reading_order(
+            [c for c in _process_check_devices(ctx, drum) if not _is_normally_open(c)]):
+        ctag = _valve_label(ctx, check)
+        cause = _cause_ltr(ctx, check.get("box"), _check_tag(check), f"{ctag} sticks open (fails to seat).")
+        if not _reverse_flow_cause_ok(ctx, cause):
+            continue
+        rev_cv_rows.append(row(
+            cause,
+            [_check_stuck_open_consequence(ctx, check)],
+            "S",
+            relief_safeguards(ctx, drum) + trip_safeguards(ctx, "P", "H", drum),
+            4, 2,
+        ))
+    rev_cv_rows.append(row(
         _cause_ltr(ctx, cv.get("box"), tag, "Loss of upstream pressure while downstream stays pressurized."),
         [_cons_related(ctx, cv.get("box"), tag, f"Backflow through {tag} toward the upstream side")], "A",
         check_safeguards(ctx, drum), 3, 2,
-        [] if check_safeguards(ctx, drum) else [ctx.recs.add(f"Provide a check valve so {tag} cannot pass reverse flow.")])]))
+        [] if check_safeguards(ctx, drum) else [ctx.recs.add(
+            f"Provide a check valve so {tag} cannot pass reverse flow.")]))
+    devs.append(dev("Reverse Flow", rev_cv_rows))
     devs.append(dev("Low Pressure", [row(
         _cause_ltr(ctx, cv.get("box"), tag, f"{tag} closes or upstream supply is lost."),
         [_cons_related(ctx, cv.get("box"), tag, f"Pressure falls at {down_name}")], "A",
@@ -1955,9 +3123,8 @@ def _entity_points(ent):
 def _color_nodes(ext):
     """One HAZOP node per colour that a NODE label points at.
 
-    The colour is followed from the first stroke to the last. Equipment, instruments and
-    valves on that colour belong to the node. A line tag is included only where the colour
-    runs alongside a piping segment — colour drawn through equipment is not treated as piping.
+    The colour is followed from the first stroke to the last. Every line, instrument,
+    valve and equipment item sitting on that colour belongs to the node.
     """
     colors = [c for c in (ext.get("node_colors") or []) if c.get("segments")]
     raw = ext.get("tokens") or []
@@ -1995,10 +3162,6 @@ def _color_nodes(ext):
     if not claimed:
         return None
 
-    equipment_ents = [
-        e for e in ext.get("equipment") or []
-        if e.get("box") and not e.get("offpage") and e.get("kind") not in ("panel", "package")
-    ]
     catalog = []
     for key, tag_key in (("equipment", "tag"), ("instruments", "tag"), ("lines", "tag"), ("valves", "code"),
                          ("connectors", "tag"), ("spec_breaks", "tag")):
@@ -2014,10 +3177,6 @@ def _color_nodes(ext):
         best_hue, best_dist = None, 1e9
         for hue, slot in claimed.items():
             segments = slot["color"].get("segments") or []
-            if key == "lines":
-                segments = _piping_segments(segments, equipment_ents)
-                if not segments:
-                    continue
             dist = min(_point_seg(px, py, seg) for px, py in points for seg in segments)
             if dist < best_dist:
                 best_hue, best_dist = hue, dist
@@ -2064,7 +3223,6 @@ def _color_nodes(ext):
             "tags": tags,
             "design_intent": "",
             "color": name,
-            "color_segments": list(slot["color"].get("segments") or []),
             "number": header["number"],
         })
     claimed_numbers = {slot["header"]["number"] for slot in claimed.values()}
@@ -2221,9 +3379,12 @@ def _auto_plan(ctx, ext):
 
 
 def _merge(parts):
-    """Combine the nodes built for each anchor of a user node; same-named deviations share one entry."""
+    """Combine anchors of one node. Same device failure is kept once (first along the flow)."""
     if len(parts) == 1:
-        return parts[0]
+        part = parts[0]
+        for group in part.get("deviations") or []:
+            group["rows"] = _unique_cause_rows(group.get("rows"))
+        return part
     devs = {}
     for p in parts:
         for d in p["deviations"]:
@@ -2235,11 +3396,12 @@ def _merge(parts):
         "boundary": join("boundary", " "),
         "design_intent": join("design_intent", " "),
         "design_conditions": join("design_conditions", "; ") or "Not shown on the P&ID.",
-        "deviations": [{"deviation": name, "rows": rows} for name, rows in devs.items()],
+        "deviations": [{"deviation": name, "rows": _unique_cause_rows(rows)} for name, rows in devs.items()],
     }
 
 
 def _build(ctx, ext, entry, nid):
+    """Walk the node from the upstream end to the downstream end; each valve is written once."""
     tags = {t.strip().upper() for t in entry.get("tags") or [] if t and t.strip()}
     main_eq = _main_equipment(ext)
     heater = next((e for e in main_eq if e["kind"] in ("heater", "exchanger")), None)
@@ -2250,25 +3412,40 @@ def _build(ctx, ext, entry, nid):
     relief = any(i["tag"].upper() in tags for i in ctx.find(cats=("relief",))) or \
         any(l["tag"].upper() in tags for l in ctx.flare_lines)
     lines = [l for l in ctx.process_lines if l["tag"].upper() in tags] or list(ctx.process_lines)
+    # Node description follows only these indicated process lines — not trim or every nearby hook-up.
+    ctx.node_line_tags = {str(l.get("tag") or "").upper() for l in lines if l.get("tag")}
+    if not ctx.node_line_tags and tags:
+        ctx.node_line_tags = {t for t in tags if any(str(l.get("tag") or "").upper() == t for l in ctx.process_lines)}
 
-    parts = [equipment_node(ctx, e, nid) for e in eqs]
-    parts += [control_valve_node(ctx, [cv], nid, heater) for cv in cvs]
+    # Method: upstream end → downstream end. Equipment first in flow order, then any CV not yet written.
+    target = next((e for e in eqs if e.get("kind") in ("vessel", "tank")), None) or (eqs[-1] if eqs else None)
+    ordered_eqs = _order_along_flow(ctx, eqs, target) if eqs else []
+    done_cvs = set()
+    parts = []
+    for eq in ordered_eqs:
+        parts.append(equipment_node(ctx, eq, nid, done_cvs=done_cvs))
+    ordered_cvs = _order_along_flow(ctx, cvs, target) if cvs else []
+    for cv in ordered_cvs:
+        tag = str(cv.get("tag") or "").upper()
+        if not tag or tag in done_cvs:
+            continue
+        done_cvs.add(tag)
+        parts.append(control_valve_node(ctx, [cv], nid, heater))
     if relief:
-        protected = eqs[0]["tag"] if eqs else (main_eq[0]["tag"] if main_eq else None)
+        protected = ordered_eqs[0]["tag"] if ordered_eqs else (main_eq[0]["tag"] if main_eq else None)
         parts.append(relief_node(ctx, nid, protected))
     if not parts:
         anchor = lines[0]["tag"] if lines else (entry.get("title") or next(iter(sorted(tags)), f"Node {nid}"))
-        # Colour through equipment is not piping — only name it process piping when a line tag was read.
         fake = {"tag": anchor, "kind": "equipment", "description": "process piping" if lines else "",
                 "design": {}, "electric": False}
-        node = equipment_node(ctx, fake, nid)
+        node = equipment_node(ctx, fake, nid, done_cvs=done_cvs)
         node["title"] = f"Process line {anchor}" if lines else anchor
         parts.append(node)
 
     node = _merge(parts)
     if (entry.get("title") or "").strip():
         node["title"] = entry["title"].strip()
-    _pinpoint_node(node, ctx, entry.get("color"), color_segments=entry.get("color_segments"))
+    _pinpoint_node(node, ctx, entry.get("color"))
     if (entry.get("design_intent") or "").strip():
         node["design_intent"] = entry["design_intent"].strip()
     return node
@@ -2455,11 +3632,11 @@ def _compile_parts(pieces, source):
                 assumptions.append(note)
     study = dict((pieces[0].get("study") or {}) if pieces else {})
     _dedupe_worksheet(nodes)
+    _scrub_cause_cross_refs(nodes)
+    _scrub_reverse_flow(nodes)
     if source == "color":
         note = (f"The drawing was studied one node at a time ({len(pieces)} colour-marked nodes). "
-                "Each colour was followed from its start to its end. Piping is only the stretch where the "
-                "coloured dashed mark runs alongside a piping segment; where it passes through equipment, "
-                "that stretch is not treated as piping.")
+                "Each colour was followed from its start to its end, including the piping, instruments and valves on it.")
     else:
         note = (f"The drawing was split into {len(pieces)} parts. Each part was studied on its own, "
                 "then the parts were compiled into this worksheet.")
@@ -2471,6 +3648,71 @@ def _worksheet(ext, study, plan, source, dedupe=True):
     ctx = Ctx(ext)
     ctx.line_relation = list((study or {}).get("line_relation") or ext.get("line_relation") or [])
     ctx.pfd_conditions = dict((study or {}).get("pfd_conditions") or ext.get("pfd_conditions") or {})
+    ctx.pfd_system_purpose = str((study or {}).get("system_purpose") or ext.get("system_purpose") or "")
+    ctx.pfd_equipment_purposes = list(
+        (study or {}).get("equipment_purposes") or ext.get("equipment_purposes") or []
+    )
+    ctx.stream_line_map = list(
+        (study or {}).get("stream_line_map") or ext.get("stream_line_map") or []
+    )
+    ctx.line_operating = dict(
+        (study or {}).get("line_operating") or ext.get("line_operating") or {}
+    )
+    ctx.equipment_operating = dict(
+        (study or {}).get("equipment_operating") or ext.get("equipment_operating") or {}
+    )
+    ctx.line_design = dict(
+        (study or {}).get("line_design") or ext.get("line_design") or {}
+    )
+    ctx.non_steady_segments = list(
+        (study or {}).get("non_steady_segments") or ext.get("non_steady_segments") or []
+    )
+    ctx.non_steady_by_role = dict(
+        (study or {}).get("non_steady_by_role") or ext.get("non_steady_by_role") or {}
+    )
+    ctx.nc_isolation_valves = list(
+        (study or {}).get("nc_isolation_valves") or ext.get("nc_isolation_valves") or []
+    )
+    if not ctx.pfd_conditions and ctx.equipment_operating:
+        ctx.pfd_conditions = dict(ctx.equipment_operating)
+    # Prefer Step 5 classification when lines were stamped during extract.
+    if ctx.non_steady_segments and not ctx.off_process_lines:
+        off_tags = {item.get("tag") for item in ctx.non_steady_segments if item.get("tag")}
+        ctx.off_process_lines = [l for l in ctx.lines if l.get("tag") in off_tags or l.get("steady_state") is False]
+        ctx.process_lines = [l for l in ctx.lines if l not in ctx.off_process_lines]
+        ctx.flare_lines = [
+            l for l in ctx.off_process_lines
+            if (l.get("off_process_role") == "flare")
+            or str(l.get("service") or "").upper() in ("FL", "SV", "BD", "VG")
+        ]
+    # Apply Step 4 design limits onto lines that still lack rating / material.
+    for line in ctx.lines:
+        tag = str(line.get("tag") or "").strip()
+        design = ctx.line_design.get(tag) or {}
+        if not design:
+            continue
+        for key in ("rating", "rating_psig", "min_temp_f", "max_temp_f", "material"):
+            if design.get(key) is not None and line.get(key) is None:
+                line[key] = design[key]
+        if design.get("sour_service") is not None and line.get("sour") is None:
+            line["sour"] = design["sour_service"]
+        if design.get("spec_known") is not None:
+            line["spec_known"] = design["spec_known"]
+        line.setdefault("design", design)
+    # Prefer stream_line_map when line_relation was not copied onto the study yet.
+    if not ctx.line_relation and ctx.stream_line_map:
+        ctx.line_relation = [
+            {
+                "pfd_stream": item.get("pfd_stream"),
+                "pid_line": item.get("pid_line"),
+                "pfd_from": item.get("pfd_from"),
+                "pfd_to": item.get("pfd_to"),
+                "pid_service": item.get("pid_service"),
+                "why": item.get("why"),
+            }
+            for item in ctx.stream_line_map
+            if item.get("matched")
+        ]
     ctx.upstream_side = _upstream_side(ctx)
     main_eq = _main_equipment(ext)
     nodes = [_build(ctx, ext, entry, i) for i, entry in enumerate(plan, 1)]
@@ -2480,6 +3722,8 @@ def _worksheet(ext, study, plan, source, dedupe=True):
             d["deviation"] = f"{n['id']}.{i} {d['deviation']}"
     if dedupe:
         _dedupe_worksheet(nodes)
+    _scrub_cause_cross_refs(nodes)
+    _scrub_reverse_flow(nodes, ctx)
 
     package = next((e for e in ext["equipment"] if e["kind"] == "package"), None)
     facility = " - ".join(x for x in [
@@ -2492,16 +3736,112 @@ def _worksheet(ext, study, plan, source, dedupe=True):
         f"C and L are the levels in the uploaded risk matrix '{matrix['source']}' ({nc} x {nl}). "
         "The risk ranking of each cause is the cell of that file, with existing safeguards in place."
     )
+    from . import sequence as hazop_sequence
+
+    step1 = hazop_sequence.STEPS[0]["rule"]
+    step2 = hazop_sequence.STEPS[1]["rule"]
+    step1_done = (
+        f"Sequence step 1 — {step1} "
+        + (
+            f"System purpose: {(ctx.pfd_system_purpose or '')[:180]} "
+            f"Purpose recorded for {len(ctx.pfd_equipment_purposes)} equipment / component(s)."
+            if ctx.pfd_system_purpose or ctx.pfd_equipment_purposes
+            else "No PFD was available for this run; purpose was taken from the P&ID alone."
+        )
+    )
+    matched = [item for item in (ctx.stream_line_map or []) if item.get("matched")]
+    if matched:
+        pairs = "; ".join(
+            f"PFD stream {item['pfd_stream']} = P&ID line {item['pid_line']}"
+            for item in matched[:6]
+        )
+        more = f" (+{len(matched) - 6} more)" if len(matched) > 6 else ""
+        step2_done = f"Sequence step 2 — {step2} Matched: {pairs}{more}."
+    elif ctx.line_relation:
+        linked = [m for m in ctx.line_relation if m.get("pid_line")]
+        step2_done = (
+            f"Sequence step 2 — {step2} "
+            f"{len(linked)} PFD stream(s) were matched to P&ID line numbers."
+        )
+    else:
+        step2_done = (
+            f"Sequence step 2 — {step2} "
+            "No PFD–P&ID stream/line pairs were available for this run."
+        )
+    step3 = hazop_sequence.STEPS[2]["rule"]
+    n_line_ops = len(ctx.line_operating or {})
+    n_eq_ops = len(ctx.equipment_operating or {})
+    if n_line_ops or n_eq_ops:
+        step3_done = (
+            f"Sequence step 3 — {step3} "
+            f"Operating parameters assigned for {n_line_ops} line(s) and {n_eq_ops} equipment item(s) "
+            "from the PFD stream map."
+        )
+    else:
+        step3_done = (
+            f"Sequence step 3 — {step3} "
+            "No mapped operating parameters were available; P&ID design blocks were used where shown."
+        )
+    step4 = hazop_sequence.STEPS[3]["rule"]
+    n_design = len(ctx.line_design or {})
+    n_known = sum(1 for d in (ctx.line_design or {}).values() if d.get("spec_known"))
+    if n_design:
+        step4_done = (
+            f"Sequence step 4 — {step4} "
+            f"Design parameters set for {n_design} piping segment(s) "
+            f"({n_known} matched to the uploaded piping specification)."
+        )
+    else:
+        step4_done = (
+            f"Sequence step 4 — {step4} "
+            "No piping segments were designed from the piping specification for this run."
+        )
+    step5 = hazop_sequence.STEPS[4]["rule"]
+    if ctx.non_steady_segments:
+        role_bits = []
+        for role in ("drain", "bypass", "vent", "flare"):
+            tags = (ctx.non_steady_by_role or {}).get(role) or []
+            if tags:
+                role_bits.append(f"{role}={len(tags)}")
+        step5_done = (
+            f"Sequence step 5 — {step5} "
+            f"Identified {len(ctx.non_steady_segments)} non-steady-state segment(s)"
+            + (f" ({', '.join(role_bits)})" if role_bits else "")
+            + f"; {len(ctx.nc_isolation_valves or [])} normally closed isolation link(s). "
+            "These are not used as steady-state process deviation causes."
+        )
+    else:
+        step5_done = (
+            f"Sequence step 5 — {step5} "
+            "No drain / bypass / vent / flare segments were flagged on this run."
+        )
     assumptions = [
         "Worksheet generated automatically by the rule-based engine from text recognised on the P&ID; review by a HAZOP team is required.",
+        step1_done,
+        step2_done,
+        step3_done,
+        step4_done,
+        step5_done,
         ranking,
         "CC (Consequence Category): S = Safety / People, E = Environment, A = Asset / Production.",
-        "Drain lines, vent lines and lines to safety valves are left out of the node description. They are not part of steady-state continuous operation.",
+        "Drain lines, vent lines, flare lines and lines to safety valves are left out of the node description. "
+        "Valves on those branches are not live in steady-state operation, so closing them is not written as the "
+        "same deviation as closing a valve on the main process supply or outlet.",
+        "The node description follows only the indicated process piping for that node. "
+        "Equipment and instrument trim on the drawing are not treated as the node line itself.",
+        "Piping components on flare, drain or vent lines, and instrument root valves, are not used as causes "
+        "for process deviations (including FSV / check valves on those branches).",
+        "Every valve std / code used as a cause is written with the line number it sits on, so its location is known.",
+        "Normally open valves (NO / LO / CSO) are not used as causes under Reverse Flow. "
+        "Reverse flow causes are a check / FSV stuck open, or loss of upstream pressure / source pressure imbalance.",
         "The node description is a summary of the process route. Design intent is the overall purpose of the node. "
         "Design conditions are the design and operating pressure and temperature of the main equipment, read from the P&ID. "
         "Each cause names the instrument that fails, the consequence names the equipment that sees it, and the safeguard names the device that stops it. "
-        "Flow follows the arrows drawn on the pipe. Consequences use the operating and design pressures from the P&ID and the PFD. "
-        "A repeated cause or consequence points back to the first place it was written.",
+        "Flow follows the arrows drawn on each pipe (not a left-to-right guess). "
+        "If HAP feeds a scrubber, the arrow between them makes HAP upstream. "
+        "Consequences use the operating and design pressures from the P&ID and the PFD. "
+        "A repeated consequence may point back to the first place it was written. "
+        "The cause column never refers to another cause or consequence; a repeated cause is omitted.",
     ]
     arrowed = sum(1 for line in ctx.process_lines if line.get("flow_from") == "arrow")
     if arrowed:
@@ -2531,10 +3871,8 @@ def _worksheet(ext, study, plan, source, dedupe=True):
         assumptions.append("HAZOP nodes were defined by the user before the worksheet was generated. Each node was then studied from its start to its end.")
     elif source == "color":
         assumptions.append(
-            "Each node is one coloured dashed mark against a node number on the P&ID. "
-            "That colour was followed from its start to its end. In the node description, only the parts of "
-            "the mark that run alongside a piping segment are described as piping; where the mark passes "
-            "through equipment, that part is equipment on the route, not piping."
+            "Each node is one colour marked against a node number on the P&ID. "
+            "That colour was followed from its start to its end, and the piping, instruments and valves on it were studied together."
         )
     elif source == "drawing":
         assumptions.append("HAZOP nodes were taken from the node numbers already marked on this sheet.")
