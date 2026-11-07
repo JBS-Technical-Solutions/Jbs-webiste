@@ -19,7 +19,8 @@ const TITLES: Record<ModelKind, string> = {
   pinn: "PINN",
 };
 
-function fmtR2(n: number) {
+function fmtR2(n: number | null) {
+  if (n == null || !Number.isFinite(n)) return "—";
   if (Math.abs(n) >= 10) return n.toFixed(1);
   if (n > 0.999) return n.toFixed(4);
   return n.toFixed(3);
@@ -65,11 +66,11 @@ export default function R2Charts({
               <div className="mh-bars">
                 {BARS.map((bar) => {
                   const r2 = info.models[id].test[bar.key].r2;
-                  const pct = Math.min(Math.max(r2, 0), 1) * 100;
+                  const pct = r2 == null || !Number.isFinite(r2) ? 0 : Math.min(Math.max(r2, 0), 1) * 100;
                   return (
                     <div
                       key={bar.key}
-                      className={`mh-col ${r2 < 0 ? "outside" : ""}`}
+                      className={`mh-col ${r2 != null && r2 < 0 ? "outside" : ""}`}
                       style={{ "--vc": bar.color } as CSSProperties}
                       title={`${bar.label}: R² ${fmtR2(r2)}`}
                     >

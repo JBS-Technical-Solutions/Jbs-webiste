@@ -40,7 +40,7 @@ export type TwinOutput = {
 };
 
 type Range = { min: number; max: number };
-type Score = { r2: number; mae: number };
+type Score = { r2: number | null; mae: number | null };
 
 export type OutputCol =
   | "T_0.2m_C"
